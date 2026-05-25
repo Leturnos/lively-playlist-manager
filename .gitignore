@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.env
+
+# Project Specific (Personal Data & Wallpapers)
+Library/*
+Static Wallpaper/
+Live Wallpaper/
+wallpapers/*
+thumbs/*
+config.json
+*.bak
+
+# Others
+.vscode/
+.idea/
+.history/
+requirements.txt
