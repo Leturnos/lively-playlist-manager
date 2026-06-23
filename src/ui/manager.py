@@ -8,7 +8,7 @@ from src.utils.thumbnails import THUMB_W, THUMB_H, create_placeholder
 from src.ui.theme import COLORS
 from src import state
 
-COLS = 3
+
 
 def clean_name(filename: str) -> str:
     """Removes common suffixes and extensions for a cleaner UI display."""
@@ -28,14 +28,25 @@ def open_playlist_manager():
         if f.lower().endswith((".mp4", ".webm", ".mkv"))
     ])
     
-    saved_active = config.get("active_wallpapers", [])
+    current_pl = config.get("current_playlist", "All Wallpapers")
+    if current_pl == "All Wallpapers":
+        current_pl_ui = "Todos os Wallpapers"
+    else:
+        current_pl_ui = current_pl
+
+    if current_pl_ui == "Todos os Wallpapers":
+        saved_active = config.get("active_wallpapers", [])
+    else:
+        playlists = config.get("playlists", {})
+        saved_active = playlists.get(current_pl_ui, [])
+        
     checks = {}
     tk_images = {}
     image_labels = {}
     cards_map = {}
 
     root = tk.Tk()
-    root.title("Wallpaper Playlist Manager")
+    root.title("Gerenciador de Playlist de Wallpapers")
     root.geometry("740x700")
     root.configure(bg=COLORS["base"])
     root.resizable(True, True)
@@ -81,6 +92,131 @@ def open_playlist_manager():
     tk.Label(header, textvariable=counter_var, bg=COLORS["base"],
              fg=COLORS["muted"], font=("Segoe UI", 9)).pack(side="right", padx=(0, 4))
 
+    # --- Playlist Selector & Actions ---
+    playlist_frame = tk.Frame(root, bg=COLORS["base"])
+    playlist_frame.pack(fill="x", padx=14, pady=(0, 10))
+
+    tk.Label(playlist_frame, text="📁 Sublista:", bg=COLORS["base"],
+             fg=COLORS["text"], font=("Segoe UI", 10, "bold")).pack(side="left", padx=(0, 6))
+
+    playlist_names = ["Todos os Wallpapers"] + list(config.get("playlists", {}).keys())
+    playlist_var = tk.StringVar(value=current_pl_ui)
+    
+    cb = ttk.Combobox(playlist_frame, textvariable=playlist_var, values=playlist_names, state="readonly", font=("Segoe UI", 9))
+    cb.pack(side="left", fill="x", expand=True, padx=(0, 8))
+    
+    def on_playlist_changed(e):
+        selected_pl = playlist_var.get()
+        load_playlist_selection(selected_pl)
+        if selected_pl == "Todos os Wallpapers":
+            set_filter("all")
+        else:
+            set_filter("active")
+        
+    cb.bind("<<ComboboxSelected>>", on_playlist_changed)
+
+    from tkinter import simpledialog
+    
+    def create_playlist():
+        name = simpledialog.askstring("Nova Sublista", "Digite o nome da nova sublista:", parent=root)
+        if not name:
+            return
+        name = name.strip()
+        if not name:
+            return
+        if name == "Todos os Wallpapers":
+            return
+            
+        playlists = config.get("playlists", {})
+        if name not in playlists:
+            # Initialize empty sublist
+            playlists[name] = []
+            config["playlists"] = playlists
+            save_config(config)
+            
+            # Update Combobox
+            updated_names = ["Todos os Wallpapers"] + list(playlists.keys())
+            cb.configure(values=updated_names)
+            playlist_var.set(name)
+            load_playlist_selection(name)
+            set_filter("all")
+            log(f"Sublist created empty: {name}")
+
+    def rename_playlist():
+        current_pl = playlist_var.get()
+        if current_pl == "Todos os Wallpapers":
+            return
+            
+        playlists = config.get("playlists", {})
+        if current_pl not in playlists:
+            return
+            
+        new_name = simpledialog.askstring("Renomear Sublista", f"Digite o novo nome para '{current_pl}':",
+                                          initialvalue=current_pl, parent=root)
+        if not new_name:
+            return
+        new_name = new_name.strip()
+        if not new_name or new_name == current_pl:
+            return
+        if new_name == "Todos os Wallpapers":
+            return
+            
+        if new_name in playlists:
+            from tkinter import messagebox
+            messagebox.showerror("Erro", f"Já existe uma sublista chamada '{new_name}'.", parent=root)
+            return
+            
+        # Rename in config
+        playlists[new_name] = playlists.pop(current_pl)
+        config["playlists"] = playlists
+        if config.get("current_playlist") == current_pl:
+            config["current_playlist"] = new_name
+        save_config(config)
+        
+        # Update combobox
+        updated_names = ["Todos os Wallpapers"] + list(playlists.keys())
+        cb.configure(values=updated_names)
+        playlist_var.set(new_name)
+        load_playlist_selection(new_name)
+        log(f"Sublist renamed: '{current_pl}' para '{new_name}'")
+
+    def delete_playlist():
+        current_pl = playlist_var.get()
+        if current_pl == "Todos os Wallpapers":
+            return
+            
+        from tkinter import messagebox
+        if not messagebox.askyesno("Confirmar Exclusão", f"Tem certeza que deseja excluir a sublista '{current_pl}'?"):
+            return
+            
+        playlists = config.get("playlists", {})
+        if current_pl in playlists:
+            del playlists[current_pl]
+            config["playlists"] = playlists
+            save_config(config)
+            
+            # Update Combobox
+            updated_names = ["Todos os Wallpapers"] + list(playlists.keys())
+            cb.configure(values=updated_names)
+            playlist_var.set("Todos os Wallpapers")
+            load_playlist_selection("Todos os Wallpapers")
+            log(f"Sublist deleted: {current_pl}")
+
+    btn_new = tk.Button(playlist_frame, text="➕ Nova", command=create_playlist,
+                        bg=COLORS["surface"], fg=COLORS["green"], relief="flat",
+                        font=("Segoe UI", 9, "bold"), padx=8, pady=2, cursor="hand2")
+    btn_new.pack(side="left", padx=(0, 4))
+
+    btn_rename = tk.Button(playlist_frame, text="✏ Renomear", command=rename_playlist,
+                           bg=COLORS["surface"], fg=COLORS["yellow"], relief="flat",
+                           font=("Segoe UI", 9, "bold"), padx=8, pady=2, cursor="hand2")
+    btn_rename.pack(side="left", padx=(0, 4))
+
+    btn_del = tk.Button(playlist_frame, text="➖ Excluir", command=delete_playlist,
+                        bg=COLORS["surface"], fg=COLORS["red"], relief="flat",
+                        font=("Segoe UI", 9, "bold"), padx=8, pady=2, cursor="hand2")
+    btn_del.pack(side="left")
+
     # --- Toolbar ---
     toolbar = tk.Frame(root, bg=COLORS["base"])
     toolbar.pack(fill="x", padx=14, pady=(0, 6))
@@ -105,7 +241,7 @@ def open_playlist_manager():
             )
         redraw()
 
-    for label, key in [("All", "all"), ("Active", "active"), ("Inactive", "inactive")]:
+    for label, key in [("Todos", "all"), ("Ativos", "active"), ("Inativos", "inactive")]:
         b = tk.Button(filter_frame, text=label,
                       bg=COLORS["mauve"] if key == "all" else COLORS["surface"],
                       fg=COLORS["base"] if key == "all" else COLORS["text"],
@@ -129,12 +265,12 @@ def open_playlist_manager():
             checks[n].set(False)
         redraw()
 
-    tk.Button(toolbar, text="✓ Select All", command=select_all,
+    tk.Button(toolbar, text="✓ Selecionar Todos", command=select_all,
               bg=COLORS["surface"], fg=COLORS["text"], relief="flat",
-              font=("Segoe UI", 9), padx=8, pady=3).pack(side="left", padx=(0, 2))
-    tk.Button(toolbar, text="✗ Deselect All", command=deselect_all,
+              font=("Segoe UI", 9), padx=8, pady=3, cursor="hand2").pack(side="left", padx=(0, 2))
+    tk.Button(toolbar, text="✗ Desmarcar Todos", command=deselect_all,
               bg=COLORS["surface"], fg=COLORS["text"], relief="flat",
-              font=("Segoe UI", 9), padx=8, pady=3).pack(side="left")
+              font=("Segoe UI", 9), padx=8, pady=3, cursor="hand2").pack(side="left")
 
     # --- Grid ---
     container = tk.Frame(root, bg=COLORS["base"])
@@ -144,19 +280,41 @@ def open_playlist_manager():
     sb = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
     grid_frame = tk.Frame(canvas, bg=COLORS["mantle"])
 
+    current_displayed_list = []
+
     grid_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
     cw = canvas.create_window((0, 0), window=grid_frame, anchor="nw")
     canvas.configure(yscrollcommand=sb.set)
     canvas.pack(side="left", fill="both", expand=True)
     sb.pack(side="right", fill="y")
-    canvas.bind("<Configure>", lambda e: canvas.itemconfig(cw, width=e.width))
+
+    resize_timer = None
+
+    def on_canvas_configure(e):
+        nonlocal resize_timer
+        canvas.itemconfig(cw, width=e.width)
+        
+        if resize_timer:
+            root.after_cancel(resize_timer)
+            
+        def apply_layout():
+            card_width = 220
+            cols = max(1, e.width // card_width)
+            for idx, name in enumerate(current_displayed_list):
+                if name in cards_map and cards_map[name].winfo_exists():
+                    row, col = divmod(idx, cols)
+                    cards_map[name].grid(row=row, column=col, padx=6, pady=6, sticky="n")
+                    
+        resize_timer = root.after(100, apply_layout)
+
+    canvas.bind("<Configure>", on_canvas_configure)
     canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
 
     placeholder_pil = create_placeholder()
 
     def update_counter():
         n_at = sum(v.get() for v in checks.values())
-        counter_var.set(f"{n_at} of {len(checks)} active")
+        counter_var.set(f"{n_at} de {len(checks)} ativos")
 
     def get_border_color(name):
         is_playing = (name == state.current_video)
@@ -165,14 +323,36 @@ def open_playlist_manager():
         if is_checked: return COLORS["mauve"]
         return COLORS["surface"]
 
+    def load_playlist_selection(playlist_name):
+        if playlist_name == "Todos os Wallpapers":
+            active_list = config.get("active_wallpapers", [])
+        else:
+            playlists = config.get("playlists", {})
+            active_list = playlists.get(playlist_name, [])
+        
+        for name in all_files:
+            if playlist_name == "Todos os Wallpapers" and not active_list:
+                checks[name].set(True)
+            else:
+                checks[name].set(name in active_list)
+        
+        redraw()
+
     def create_cards(list_to_show):
+        nonlocal current_displayed_list
+        current_displayed_list = list_to_show
+
         for w in grid_frame.winfo_children():
             w.destroy()
         cards_map.clear()
         image_labels.clear()
 
+        width = canvas.winfo_width()
+        card_width = 220
+        cols = max(1, width // card_width) if width > 10 else 3
+
         for idx, name in enumerate(list_to_show):
-            row, col = divmod(idx, COLS)
+            row, col = divmod(idx, cols)
             var = checks[name]
 
             card = tk.Frame(grid_frame, bg=COLORS["mantle"], padx=3, pady=3,
@@ -203,7 +383,7 @@ def open_playlist_manager():
             lbl.bind("<Button-1>", _toggle)
 
             if name == state.current_video:
-                tk.Label(card, text="▶ playing now", bg=COLORS["green"], fg=COLORS["base"],
+                tk.Label(card, text="▶ tocando agora", bg=COLORS["green"], fg=COLORS["base"],
                          font=("Segoe UI", 7, "bold"), padx=4).pack(fill="x")
 
             tk.Label(card, text=clean_name(name), bg=COLORS["mantle"], fg=COLORS["text"],
@@ -215,7 +395,7 @@ def open_playlist_manager():
 
             tk.Checkbutton(bottom, variable=var, bg=COLORS["mantle"],
                            selectcolor=COLORS["surface"], fg=COLORS["mauve"],
-                           text="Active", font=("Segoe UI", 8),
+                           text="Ativo", font=("Segoe UI", 8),
                            command=lambda n=name, c=card: (
                                c.configure(highlightbackground=get_border_color(n)),
                                update_counter()
@@ -227,7 +407,7 @@ def open_playlist_manager():
                 state.skip_event.set()
                 log(f"Manual play requested: {n}")
 
-            tk.Button(bottom, text="▶ Play", command=play_now,
+            tk.Button(bottom, text="▶ Tocar", command=play_now,
                       bg=COLORS["surface"], fg=COLORS["mauve"], relief="flat",
                       font=("Segoe UI", 8), padx=6, pady=1,
                       cursor="hand2").pack(side="right", padx=4)
@@ -263,16 +443,27 @@ def open_playlist_manager():
 
     def save_and_close():
         selected = [n for n, v in checks.items() if v.get()]
-        config["active_wallpapers"] = [] if len(selected) == len(all_files) else selected
+        current_pl = playlist_var.get()
+        
+        if current_pl == "Todos os Wallpapers":
+            config["active_wallpapers"] = [] if len(selected) == len(all_files) else selected
+            config["current_playlist"] = "All Wallpapers"
+        else:
+            if "playlists" not in config:
+                config["playlists"] = {}
+            config["playlists"][current_pl] = selected
+            config["current_playlist"] = current_pl
+            
         save_config(config)
-        log(f"Selection saved: {len(selected)} active")
+        log(f"Selection saved for '{current_pl}': {len(selected)} active")
+        state.playlist_needs_reload = True
         state.skip_event.set()
         on_close()
 
     footer = tk.Frame(root, bg=COLORS["base"])
     footer.pack(fill="x", padx=14, pady=(4, 12))
 
-    tk.Button(footer, text="✔  Save and Close", command=save_and_close,
+    tk.Button(footer, text="✔  Salvar e Fechar", command=save_and_close,
               bg=COLORS["mauve"], fg=COLORS["base"], relief="flat",
               font=("Segoe UI", 10, "bold"), pady=8,
               cursor="hand2").pack(fill="x")
