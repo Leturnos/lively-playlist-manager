@@ -36,14 +36,18 @@ def find_lively_exe():
     return path1
 
 DEFAULT_LIVELY_EXE = find_lively_exe()
-AVAILABLE_MODES = ["video", "1min", "5min"]
+AVAILABLE_MODES = ["video", "30s", "1min", "5min", "10min", "30min", "1h"]
 
 def load_config():
     """Loads configuration from disk."""
     default_config = {
         "lively_path": DEFAULT_LIVELY_EXE,
         "mode": "video",
-        "active_wallpapers": []
+        "active_wallpapers": [],
+        "rotation_order": "shuffle",
+        "playlists": {},
+        "current_playlist": "All Wallpapers",
+        "duration_cache": {}
     }
     
     if os.path.exists(CONFIG_FILE):
@@ -55,7 +59,11 @@ def load_config():
             config = {
                 "lively_path": data.get("lively_path", default_config["lively_path"]),
                 "mode": data.get("mode", default_config["mode"]),
-                "active_wallpapers": data.get("active_wallpapers", default_config["active_wallpapers"])
+                "active_wallpapers": data.get("active_wallpapers", default_config["active_wallpapers"]),
+                "rotation_order": data.get("rotation_order", default_config["rotation_order"]),
+                "playlists": data.get("playlists", default_config["playlists"]),
+                "current_playlist": data.get("current_playlist", default_config["current_playlist"]),
+                "duration_cache": data.get("duration_cache", default_config["duration_cache"])
             }
             
             if config["mode"] not in AVAILABLE_MODES:
