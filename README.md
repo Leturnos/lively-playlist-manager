@@ -57,9 +57,13 @@ Criado automaticamente na primeira execução. Pode ser editado manualmente ou v
 
 | Chave | Valores | Descrição |
 |---|---|---|
-| `mode` | `"video"`, `"1min"`, `"5min"` | Quando trocar o wallpaper |
-| `active_wallpapers` | lista de nomes de arquivo | Quais vídeos entram na rotação. Lista vazia = todos ativos |
+| `mode` | `"video"`, `"30s"`, `"1min"`, `"5min"`, `"10min"`, `"30min"`, `"1h"` | Quando trocar o wallpaper |
+| `active_wallpapers` | lista de nomes de arquivo | Wallpapers ativos para a lista principal |
 | `lively_path` | caminho absoluto | Onde está o `Lively.exe` |
+| `rotation_order` | `"shuffle"`, `"sequential"` | Modo de rotação (Aleatório ou Sequencial) |
+| `current_playlist` | `"All Wallpapers"` ou nome da sublista | Sublista ativa atualmente selecionada |
+| `playlists` | dicionário de `{ nome: [arquivos] }` | Armazena as sublistas de wallpapers criadas |
+| `duration_cache` | dicionário de `{ arquivo: segundos }` | Cache com a duração de cada vídeo (melhora performance) |
 
 > **Nota:** `mode: null` significa que nenhum modo foi configurado ainda. O programa aguarda você selecionar um pelo menu da bandeja antes de começar a trocar.
 
@@ -69,18 +73,22 @@ Criado automaticamente na primeira execução. Pode ser editado manualmente ou v
 
 O programa vive na bandeja do sistema. Clique no ícone para abrir o menu:
 
-- **Duração do vídeo** — troca quando o vídeo termina (com antecipação de 1s para evitar o flash do loop)
-- **Trocar a cada 1 min / 5 min** — troca por tempo, repetindo o vídeo se necessário
-- **⏸ Pausar troca** — congela na faixa atual, o Lively continua rodando normalmente
+- **Sublista Ativa (Submenu)** — escolhe qual sublista de papéis de parede usar (gerenciadas pela interface)
+- **Tempo de Troca (Submenu)** — define o tempo de permanência de cada vídeo (Duração do vídeo, 30 segundos, 1 min, 5 min, 10 min, 30 min ou 1 hora)
+- **Modo de Rotação (Submenu)** — alterna entre rotação **Aleatória (Shuffle)** ou **Sequencial** (ordem alfabética)
+- **⏸ Pausar troca / ▶ Retomar troca** — congela na faixa atual, o Lively continua rodando normalmente
+- **⏮ Voltar Anterior** — retorna para o wallpaper reproduzido anteriormente usando a pilha de histórico
 - **⏭ Próximo agora** — pula para o próximo imediatamente
 - **📋 Gerenciar playlist** — abre a interface visual (também abre com clique simples no ícone)
 
 ### Gerenciador visual
 
-Grid com miniaturas de todos os wallpapers. Permite:
-- Ativar/desativar wallpapers individualmente com clique na imagem ou checkbox
-- Filtrar por **Todos / Ativos / Inativos**
-- Busca por nome
+Interface totalmente em português para controle da biblioteca:
+- **Painel de Sublistas:** crie novas playlists zeradas (➕ Nova), renomeie (✏ Renomear) ou apague com confirmação (➖ Excluir)
+- Grid de miniaturas responsivo: o número de colunas se **ajusta de forma dinâmica** ao redimensionar ou maximizar a janela (com debounce para evitar lentidão)
+- Ativar/desativar wallpapers na sublista selecionada clicando no card ou checkbox
+- Filtro inteligente por **Todos / Ativos / Inativos** (se ajusta ao selecionar uma sublista personalizada)
+- Busca por nome e atalhos rápidos (**✓ Selecionar Todos / ✗ Desmarcar Todos**) com feedback de hover no cursor
 - **▶ Tocar** em qualquer card para ir direto àquele wallpaper
 - Badge **"▶ tocando agora"** no card atual, com scroll automático até ele ao abrir
 
