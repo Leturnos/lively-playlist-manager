@@ -72,6 +72,17 @@ def set_wallpaper(video_path: str) -> bool:
             log(f"Lively Error ({result.returncode}): {result.stderr.strip()}")
             return False
             
+        # Update history stack
+        if state.current_video:
+            current_path = os.path.join(os.path.dirname(video_path), state.current_video)
+            if state.is_going_back:
+                state.is_going_back = False
+            else:
+                if not state.history or state.history[-1] != current_path:
+                    state.history.append(current_path)
+                    if len(state.history) > 50:
+                        state.history.pop(0)
+            
         state.current_video = os.path.basename(video_path)
         log(f"Wallpaper changed: {state.current_video}")
         return True
