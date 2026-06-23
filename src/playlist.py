@@ -2,18 +2,29 @@ import os
 import random
 import time
 from moviepy import VideoFileClip
-from src.config import config, WALLPAPER_DIR, load_config
+from src.config import config, WALLPAPER_DIR, load_config, save_config
 from src.utils.logger import log
 from src.utils.window_state import is_user_gaming_or_focused
 from src.lively import set_wallpaper
 from src import state
 
 def get_video_duration(video_path: str) -> float | None:
-    """Gets the duration of a video in seconds."""
+    """Gets the duration of a video in seconds, caching the result in config."""
+    filename = os.path.basename(video_path)
+    cache = config.get("duration_cache", {})
+    if filename in cache:
+        return cache[filename]
+        
     try:
         clip = VideoFileClip(video_path)
         duration = clip.duration
         clip.close()
+        
+        # Save to cache
+        cache[filename] = duration
+        config["duration_cache"] = cache
+        save_config(config)
+        
         return duration
     except Exception as e:
         log(f"ERROR getting duration for {video_path}: {e}")
@@ -30,7 +41,14 @@ def get_playlist() -> list[str]:
         if f.lower().endswith((".mp4", ".webm", ".mkv"))
     ])
     
-    active_list = config.get("active_wallpapers", [])
+    current_playlist_name = config.get("current_playlist", "All Wallpapers")
+    
+    if current_playlist_name == "All Wallpapers":
+        active_list = config.get("active_wallpapers", [])
+    else:
+        playlists = config.get("playlists", {})
+        active_list = playlists.get(current_playlist_name, [])
+        
     selected = [f for f in all_files if not active_list or f in active_list]
     
     return [os.path.join(WALLPAPER_DIR, f) for f in (selected or all_files)]
@@ -46,7 +64,8 @@ def run_rotation_engine():
             continue
 
         playlist = get_playlist()
-        random.shuffle(playlist)
+        if config.get("rotation_order", "shuffle") == "shuffle":
+            random.shuffle(playlist)
 
         if not playlist:
             time.sleep(10)
@@ -58,8 +77,19 @@ def run_rotation_engine():
             if state.stop_event.is_set():
                 break
 
+            if state.playlist_needs_reload:
+                state.playlist_needs_reload = False
+                break
+
+            # Handle "Play Previous" request
+            if state.play_previous_event.is_set():
+                state.play_previous_event.clear()
+                if state.history:
+                    state.is_going_back = True
+                    video_path = state.history.pop()
+
             # Handle "Play Now" request from Manager
-            if state.play_specific_event.is_set():
+            elif state.play_specific_event.is_set():
                 state.play_specific_event.clear()
                 if state.next_video_request:
                     video_path = state.next_video_request
@@ -75,8 +105,21 @@ def run_rotation_engine():
                 time.sleep(5)
                 continue
 
+            try:
+                from src.ui.tray import update_menu
+                update_menu()
+            except Exception:
+                pass
+
             mode = config.get("mode", "video")
-            limit = {"1min": 60, "5min": 300}.get(mode, duration)
+            limit = {
+                "30s": 30,
+                "1min": 60,
+                "5min": 300,
+                "10min": 600,
+                "30min": 1800,
+                "1h": 3600
+            }.get(mode, duration)
             effective_limit = max(1, limit - 1) if mode == "video" else limit
 
             state.skip_event.clear()
@@ -85,7 +128,11 @@ def run_rotation_engine():
             last_loop_log = 0
             
             while True:
-                if state.stop_event.is_set() or state.skip_event.is_set() or state.play_specific_event.is_set():
+                if (state.stop_event.is_set() or 
+                    state.skip_event.is_set() or 
+                    state.play_specific_event.is_set() or 
+                    state.play_previous_event.is_set() or
+                    state.playlist_needs_reload):
                     break
                 if active_time >= effective_limit:
                     break
