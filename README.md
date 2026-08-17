@@ -64,6 +64,7 @@ Criado automaticamente na primeira execução. Pode ser editado manualmente ou v
 | `current_playlist` | `"All Wallpapers"` ou nome da sublista | Sublista ativa atualmente selecionada |
 | `playlists` | dicionário de `{ nome: [arquivos] }` | Armazena as sublistas de wallpapers criadas |
 | `duration_cache` | dicionário de `{ arquivo: segundos }` | Cache com a duração de cada vídeo (melhora performance) |
+| `target_monitor` | `null` (padrão) ou número inteiro (`0`, `1`, etc.) | Define um monitor específico para aplicar os wallpapers (omitido por padrão) |
 
 > **Nota:** `mode: null` significa que nenhum modo foi configurado ainda. O programa aguarda você selecionar um pelo menu da bandeja antes de começar a trocar.
 
@@ -98,11 +99,12 @@ As miniaturas são geradas em background ao iniciar o programa e salvas em `thum
 
 ## 🛠️ Funcionalidades técnicas
 
-### Detecção de fullscreen
-O script detecta geometricamente se há um app ou jogo ocupando a tela toda e pausa o temporizador enquanto isso acontece — o Lively já pausa o wallpaper nessa situação, e o temporizador acompanha para não trocar assim que o jogo fechar.
+### Detecção de fullscreen & Múltiplos Monitores
+O script detecta geometricamente se há um app ou jogo ocupando a tela toda (em qualquer um dos monitores conectados via `MonitorFromWindow` e `GetMonitorInfoW` da Win32 API) e pausa o temporizador enquanto isso acontece — o Lively já pausa o wallpaper nessa situação, e o temporizador acompanha para não pular vídeos enquanto o jogo ou app estiver aberto.
+Além disso, quando a tela do Windows é bloqueada (`Win+L`) ou entra em repouso, o temporizador congela automaticamente para economizar ciclos e preservar a playlist.
 
 **Janelas ignoradas na detecção** (não tratadas como fullscreen):
-- `WorkerW`, `Progman`, `Shell_TrayWnd` — componentes da área de trabalho do Windows
+- `WorkerW`, `Progman`, `Shell_TrayWnd`, `Shell_SecondaryTrayWnd` — componentes da área de trabalho e barras de tarefas do Windows
 - `TMainBox` — janela overlay do **iTop Easy Desktop**, que cobre a tela toda mesmo sem nada em foco
 
 Se você usar outro app com comportamento parecido e o temporizador travar, rode o script `debug_window.py` para identificar a classe da janela problemática e adicione ao filtro em `src/utils/window_state.py`.
@@ -117,10 +119,9 @@ Wallpapers HTML nativos do Lively (`Type: 1`, como Fluids, Rain, etc.) não são
 ### Temporizador com tempo real
 O temporizador usa `time.time()` como âncora em vez de contador de ticks. Isso evita drift acumulado e garante que o tempo pausado durante fullscreen não seja contado — o relógio só avança quando o wallpaper está realmente visível.
 
-### Quirks do Lively CLI
-O comando `setwp` do Lively tem alguns comportamentos não documentados descobertos durante o desenvolvimento:
-
-- `--monitor 0` causa falha silenciosa — o Lively retorna código 0 mas não troca nada. O parâmetro deve ser omitido. Isso está relacionado à configuração de Output de Áudio do Lively: quando definido como "Todas as telas", o script funciona corretamente sem o parâmetro --monitor. Se você usar o modo "Por tela", o comportamento pode ser imprevisível — o script não foi testado nessa configuração.
+### Quirks e Controle do Lively CLI
+- **Controle por monitor:** O script suporta o envio do argumento `--monitor <id>` caso configurado em `target_monitor` no `config.json` ou passado programmaticamente em `set_wallpaper()`.
+- **Controle de playback:** A função `set_lively_playback()` permite pausar/retomar globalmente o reprodutor do Lively usando `Lively.exe app --play <true|false>`.
 - O `setwp` só funciona com o Lively já rodando. O script detecta isso via `psutil` e abre o Lively automaticamente se necessário.
 - O Lively precisa ter sua janela "acordada" para processar o comando em algumas versões. Se o wallpaper não trocar, verifique se o Lively está minimizado vs. rodando em background.
 

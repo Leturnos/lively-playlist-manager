@@ -36,8 +36,28 @@ def clear_library_videos():
             except Exception:
                 continue
 
-def set_wallpaper(video_path: str) -> bool:
-    """Sends a command to Lively.exe to change the current wallpaper."""
+def set_lively_playback(play: bool) -> bool:
+    """Toggles Lively playback state (pause/resume) globally."""
+    lively_exe = config.get("lively_path")
+    if not os.path.exists(lively_exe) or not is_lively_running():
+        return False
+    try:
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        subprocess.run(
+            [lively_exe, "app", "--play", "true" if play else "false"],
+            startupinfo=si,
+            timeout=5,
+            capture_output=True,
+            text=True
+        )
+        return True
+    except Exception as e:
+        log(f"ERROR toggling Lively playback: {e}")
+        return False
+
+def set_wallpaper(video_path: str, monitor: int | None = None) -> bool:
+    """Sends a command to Lively.exe to change the current wallpaper, optionally targeting a specific monitor."""
     lively_exe = config.get("lively_path")
     
     if not os.path.exists(lively_exe):
@@ -60,8 +80,13 @@ def set_wallpaper(video_path: str) -> bool:
         
         clear_library_videos()
         
+        target_mon = monitor if monitor is not None else config.get("target_monitor")
+        cmd = [lively_exe, "setwp", "--file", video_path]
+        if target_mon is not None:
+            cmd.extend(["--monitor", str(target_mon)])
+            
         result = subprocess.run(
-            [lively_exe, "setwp", "--file", video_path],
+            cmd,
             startupinfo=si, 
             timeout=15, 
             capture_output=True, 
@@ -84,7 +109,7 @@ def set_wallpaper(video_path: str) -> bool:
                         state.history.pop(0)
             
         state.current_video = os.path.basename(video_path)
-        log(f"Wallpaper changed: {state.current_video}")
+        log(f"Wallpaper changed: {state.current_video}" + (f" (Monitor {target_mon})" if target_mon is not None else ""))
         return True
         
     except subprocess.TimeoutExpired:
@@ -93,3 +118,4 @@ def set_wallpaper(video_path: str) -> bool:
     except Exception as e:
         log(f"ERROR setting wallpaper: {e}")
         return False
+

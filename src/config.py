@@ -47,7 +47,8 @@ def load_config():
         "rotation_order": "shuffle",
         "playlists": {},
         "current_playlist": "All Wallpapers",
-        "duration_cache": {}
+        "duration_cache": {},
+        "target_monitor": None
     }
     
     if os.path.exists(CONFIG_FILE):
@@ -63,7 +64,8 @@ def load_config():
                 "rotation_order": data.get("rotation_order", default_config["rotation_order"]),
                 "playlists": data.get("playlists", default_config["playlists"]),
                 "current_playlist": data.get("current_playlist", default_config["current_playlist"]),
-                "duration_cache": data.get("duration_cache", default_config["duration_cache"])
+                "duration_cache": data.get("duration_cache", default_config["duration_cache"]),
+                "target_monitor": data.get("target_monitor", default_config["target_monitor"])
             }
             
             if config["mode"] not in AVAILABLE_MODES:
