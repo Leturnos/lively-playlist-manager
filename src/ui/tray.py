@@ -71,6 +71,12 @@ def play_previous():
 def quit_app():
     """Signals all threads to stop and shuts down the tray icon."""
     state.stop_event.set()
+    if state.hotkey_thread_id:
+        try:
+            import ctypes
+            ctypes.windll.user32.PostThreadMessageW(state.hotkey_thread_id, 0x0012, 0, 0)
+        except Exception:
+            pass
     if tray_icon:
         tray_icon.stop()
 
@@ -131,8 +137,8 @@ def build_menu():
         )),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(pause_label, toggle_pause),
-        pystray.MenuItem("⏮  Voltar Anterior", play_previous, enabled=has_history),
-        pystray.MenuItem("⏭  Próximo Agora", skip_next),
+        pystray.MenuItem("⏮  Voltar Anterior (Win+Alt+PgUp)", play_previous, enabled=has_history),
+        pystray.MenuItem("⏭  Próximo Agora (Win+Alt+PgDn)", skip_next),
         pystray.MenuItem("📋  Gerenciar Playlist", open_manager),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Sair", quit_app),

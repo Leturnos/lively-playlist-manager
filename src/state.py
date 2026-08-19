@@ -14,6 +14,7 @@ is_window_open = False
 playlist_needs_reload = False
 is_going_back = False
 history = []  # List of video paths
+hotkey_thread_id = None
 
 # Locks
 thumbs_lock = threading.Lock()
