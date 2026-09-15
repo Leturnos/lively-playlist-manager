@@ -6,6 +6,9 @@ from src.config import config, save_config, WALLPAPER_DIR
 from src.utils.logger import log
 from src.utils.thumbnails import THUMB_W, THUMB_H, create_placeholder
 from src.ui.theme import COLORS
+from src.ui.dialogs import prompt_dialog, confirm_dialog, info_dialog
+from src.utils.cache import scan_orphans, cleanup_orphans
+from src.lively import open_lively_gui
 from src import state
 
 
@@ -44,10 +47,11 @@ def open_playlist_manager():
     tk_images = {}
     image_labels = {}
     cards_map = {}
+    pending_thumbs = set()
 
     root = tk.Tk()
     root.title("Gerenciador de Playlist de Wallpapers")
-    root.geometry("740x700")
+    root.geometry("760x700")
     root.configure(bg=COLORS["base"])
     root.resizable(True, True)
     
@@ -81,12 +85,68 @@ def open_playlist_manager():
             result.append(n)
         return result
 
-    # --- Header ---
+    # --- Header with Quick Actions ---
     header = tk.Frame(root, bg=COLORS["base"])
-    header.pack(fill="x", padx=14, pady=(12, 6))
+    header.pack(fill="x", padx=14, pady=(12, 8))
 
     tk.Label(header, text="🎞  Wallpaper Playlist", bg=COLORS["base"],
-             fg=COLORS["mauve"], font=("Segoe UI", 13, "bold")).pack(side="left")
+             fg=COLORS["mauve"], font=("Segoe UI", 13, "bold")).pack(side="left", padx=(0, 10))
+
+    def open_wallpaper_dir():
+        try:
+            os.startfile(WALLPAPER_DIR)
+        except Exception as e:
+            log(f"Error opening wallpaper dir: {e}")
+
+    def open_lively():
+        open_lively_gui()
+
+    def run_cache_cleanup():
+        orphans = scan_orphans()
+        n_thumbs = len(orphans["orphan_thumbs"])
+        n_cache = len(orphans["orphan_cache"])
+        if n_thumbs == 0 and n_cache == 0:
+            info_dialog(root, "Cache Limpo", "Nenhum arquivo órfão encontrado. Seu cache e miniaturas estão totalmente sincronizados com os wallpapers.")
+            return
+
+        msg = (f"Foram encontrados {n_thumbs} miniatura(s) e {n_cache} registro(s) de duração "
+               f"de vídeos que não existem mais na pasta wallpapers.\n\nDeseja limpá-los com segurança?")
+        if confirm_dialog(root, "Limpeza de Cache Órfão", msg):
+            res = cleanup_orphans()
+            info_dialog(root, "Sucesso", f"Limpeza concluída!\n\nRemovidas {res['cleaned_thumbs']} miniaturas e {res['cleaned_cache']} entradas de duração.")
+
+    def reload_wallpapers():
+        nonlocal all_files
+        all_files = sorted([
+            f for f in os.listdir(WALLPAPER_DIR)
+            if f.lower().endswith((".mp4", ".webm", ".mkv"))
+        ])
+        for n in all_files:
+            if n not in checks:
+                checks[n] = tk.BooleanVar(value=True)
+        redraw()
+        update_counter()
+        log(f"Wallpapers reloaded: {len(all_files)} files found.")
+
+    btn_folder = tk.Button(header, text="📂 Abrir Pasta", command=open_wallpaper_dir,
+                           bg=COLORS["surface"], fg=COLORS["text"], relief="flat",
+                           font=("Segoe UI", 8, "bold"), padx=6, pady=2, cursor="hand2")
+    btn_folder.pack(side="left", padx=(0, 4))
+
+    btn_lively = tk.Button(header, text="🎨 Abrir Lively", command=open_lively,
+                           bg=COLORS["surface"], fg=COLORS["mauve"], relief="flat",
+                           font=("Segoe UI", 8, "bold"), padx=6, pady=2, cursor="hand2")
+    btn_lively.pack(side="left", padx=(0, 4))
+
+    btn_clean = tk.Button(header, text="🧹 Limpar Cache", command=run_cache_cleanup,
+                          bg=COLORS["surface"], fg=COLORS["yellow"], relief="flat",
+                          font=("Segoe UI", 8, "bold"), padx=6, pady=2, cursor="hand2")
+    btn_clean.pack(side="left", padx=(0, 4))
+
+    btn_refresh = tk.Button(header, text="🔄", command=reload_wallpapers,
+                            bg=COLORS["surface"], fg=COLORS["subtext"], relief="flat",
+                            font=("Segoe UI", 8, "bold"), padx=5, pady=2, cursor="hand2")
+    btn_refresh.pack(side="left")
 
     counter_var = tk.StringVar()
     tk.Label(header, textvariable=counter_var, bg=COLORS["base"],
@@ -115,32 +175,31 @@ def open_playlist_manager():
         
     cb.bind("<<ComboboxSelected>>", on_playlist_changed)
 
-    from tkinter import simpledialog
-    
     def create_playlist():
-        name = simpledialog.askstring("Nova Sublista", "Digite o nome da nova sublista:", parent=root)
+        name = prompt_dialog(root, "Nova Sublista", "Digite o nome da nova sublista:")
         if not name:
             return
         name = name.strip()
-        if not name:
-            return
-        if name == "Todos os Wallpapers":
+        if not name or name == "Todos os Wallpapers":
             return
             
         playlists = config.get("playlists", {})
-        if name not in playlists:
-            # Initialize empty sublist
-            playlists[name] = []
-            config["playlists"] = playlists
-            save_config(config)
-            
-            # Update Combobox
-            updated_names = ["Todos os Wallpapers"] + list(playlists.keys())
-            cb.configure(values=updated_names)
-            playlist_var.set(name)
-            load_playlist_selection(name)
-            set_filter("all")
-            log(f"Sublist created empty: {name}")
+        if name in playlists:
+            info_dialog(root, "Aviso", f"A sublista '{name}' já existe.")
+            return
+
+        # Initialize empty sublist
+        playlists[name] = []
+        config["playlists"] = playlists
+        save_config(config)
+        
+        # Update Combobox
+        updated_names = ["Todos os Wallpapers"] + list(playlists.keys())
+        cb.configure(values=updated_names)
+        playlist_var.set(name)
+        load_playlist_selection(name)
+        set_filter("all")
+        log(f"Sublist created empty: {name}")
 
     def rename_playlist():
         current_pl = playlist_var.get()
@@ -151,8 +210,8 @@ def open_playlist_manager():
         if current_pl not in playlists:
             return
             
-        new_name = simpledialog.askstring("Renomear Sublista", f"Digite o novo nome para '{current_pl}':",
-                                          initialvalue=current_pl, parent=root)
+        new_name = prompt_dialog(root, "Renomear Sublista", f"Digite o novo nome para '{current_pl}':",
+                                 initial_value=current_pl)
         if not new_name:
             return
         new_name = new_name.strip()
@@ -162,8 +221,7 @@ def open_playlist_manager():
             return
             
         if new_name in playlists:
-            from tkinter import messagebox
-            messagebox.showerror("Erro", f"Já existe uma sublista chamada '{new_name}'.", parent=root)
+            info_dialog(root, "Erro", f"Já existe uma sublista chamada '{new_name}'.", is_error=True)
             return
             
         # Rename in config
@@ -185,14 +243,15 @@ def open_playlist_manager():
         if current_pl == "Todos os Wallpapers":
             return
             
-        from tkinter import messagebox
-        if not messagebox.askyesno("Confirmar Exclusão", f"Tem certeza que deseja excluir a sublista '{current_pl}'?"):
+        if not confirm_dialog(root, "Confirmar Exclusão", f"Tem certeza que deseja excluir a sublista '{current_pl}'?", is_destructive=True):
             return
             
         playlists = config.get("playlists", {})
         if current_pl in playlists:
             del playlists[current_pl]
             config["playlists"] = playlists
+            if config.get("current_playlist") == current_pl:
+                config["current_playlist"] = "All Wallpapers"
             save_config(config)
             
             # Update Combobox
@@ -289,21 +348,52 @@ def open_playlist_manager():
     sb.pack(side="right", fill="y")
 
     resize_timer = None
+    saved_top_item = None
 
     def on_canvas_configure(e):
-        nonlocal resize_timer
+        nonlocal resize_timer, saved_top_item
         canvas.itemconfig(cw, width=e.width)
         
+        # Capture the topmost visible card before resize changes the layout
+        if saved_top_item is None:
+            top_y = canvas.canvasy(0)
+            for name in current_displayed_list:
+                card = cards_map.get(name)
+                if card and card.winfo_exists():
+                    if card.winfo_y() + card.winfo_height() >= top_y:
+                        saved_top_item = name
+                        break
+
         if resize_timer:
             root.after_cancel(resize_timer)
             
         def apply_layout():
+            nonlocal saved_top_item
             card_width = 220
             cols = max(1, e.width // card_width)
             for idx, name in enumerate(current_displayed_list):
                 if name in cards_map and cards_map[name].winfo_exists():
                     row, col = divmod(idx, cols)
                     cards_map[name].grid(row=row, column=col, padx=6, pady=6, sticky="n")
+
+            root.update_idletasks()
+            bbox = canvas.bbox("all")
+            if bbox:
+                canvas.configure(scrollregion=bbox)
+                total_h = bbox[3] - bbox[1]
+                viewport_h = canvas.winfo_height()
+
+                if total_h <= viewport_h:
+                    canvas.yview_moveto(0.0)
+                elif saved_top_item and saved_top_item in cards_map and cards_map[saved_top_item].winfo_exists():
+                    new_y = cards_map[saved_top_item].winfo_y()
+                    canvas.yview_moveto(max(0.0, min(1.0, (new_y - 6) / max(1, total_h))))
+                else:
+                    y_first, y_last = canvas.yview()
+                    if y_last > 1.0 or y_first > 0.95:
+                        canvas.yview_moveto(0.0)
+
+            saved_top_item = None
                     
         resize_timer = root.after(100, apply_layout)
 
@@ -366,8 +456,10 @@ def open_playlist_manager():
             
             if tp and os.path.exists(tp):
                 pil = Image.open(tp).resize((THUMB_W, THUMB_H), Image.Resampling.LANCZOS)
+                pending_thumbs.discard(name)
             else:
                 pil = placeholder_pil.copy()
+                pending_thumbs.add(name)
             
             tk_img = ImageTk.PhotoImage(pil)
             tk_images[name] = tk_img
@@ -434,12 +526,21 @@ def open_playlist_manager():
         if not root.winfo_exists(): return
         with state.thumbs_lock:
             ready = dict(state.thumbs_ready)
-        for name, path in ready.items():
+        
+        newly_ready = [n for n in list(pending_thumbs) if n in ready and os.path.exists(ready[n])]
+        for name in newly_ready:
             if name in image_labels and image_labels[name].winfo_exists():
-                # Logic to update if it was a placeholder
-                pass 
-        root.after(2000, check_new_thumbs)
-    root.after(2000, check_new_thumbs)
+                try:
+                    tp = ready[name]
+                    pil = Image.open(tp).resize((THUMB_W, THUMB_H), Image.Resampling.LANCZOS)
+                    tk_img = ImageTk.PhotoImage(pil)
+                    tk_images[name] = tk_img
+                    image_labels[name].configure(image=tk_img)
+                    pending_thumbs.discard(name)
+                except Exception as e:
+                    log(f"Error updating thumbnail for {name}: {e}")
+        root.after(1500, check_new_thumbs)
+    root.after(1500, check_new_thumbs)
 
     def save_and_close():
         selected = [n for n, v in checks.items() if v.get()]
