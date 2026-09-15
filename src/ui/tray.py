@@ -68,6 +68,14 @@ def play_previous():
     else:
         log("No wallpaper history to go back to")
 
+def set_target_monitor(mon: str | int):
+    """Updates the target monitor setting and notifies the engine."""
+    config["target_monitor"] = mon
+    save_config(config)
+    log(f"Target monitor changed to: {mon}")
+    update_menu()
+    state.skip_event.set()
+
 def quit_app():
     """Signals all threads to stop and shuts down the tray icon."""
     state.stop_event.set()
@@ -81,13 +89,14 @@ def quit_app():
         tray_icon.stop()
 
 def open_manager():
-    """Placeholder: this will be linked to the Tkinter Manager window."""
-    # This needs to be imported here or passed as a callback to avoid circular imports
+    """Opens the Tkinter Playlist Manager window in a separate thread."""
     from .manager import open_playlist_manager
     threading.Thread(target=open_playlist_manager, daemon=True).start()
 
 def build_menu():
     """Constructs the system tray context menu."""
+    from src.lively import get_lively_monitors
+
     m = config.get("mode")
     def get_check(mode_key): return "✓ " if m == mode_key else "   "
     
@@ -113,13 +122,29 @@ def build_menu():
             pystray.MenuItem(f"{get_playlist_check(pl_name)}{pl_name}", make_playlist_setter(pl_name))
         )
     
+    # Monitor menu items
+    curr_mon = config.get("target_monitor")
+    is_auto = (curr_mon in (None, "auto"))
+    def get_mon_check(cond): return "✓ " if cond else "   "
+
+    monitor_items = [
+        pystray.MenuItem(f"{get_mon_check(is_auto)}Seguir Lively (Auto)", lambda: set_target_monitor("auto"))
+    ]
+    for mon in get_lively_monitors():
+        idx = mon["index"]
+        name = mon["name"]
+        primary_suffix = " (Principal)" if mon.get("is_primary") else ""
+        is_selected = (not is_auto and str(curr_mon) == str(idx))
+        label = f"{get_mon_check(is_selected)}Monitor {idx}: {name}{primary_suffix}"
+        monitor_items.append(
+            pystray.MenuItem(label, (lambda i=idx: lambda: set_target_monitor(i))())
+        )
+
     pause_label = "▶  Retomar Troca" if state.is_paused else "⏸  Pausar Troca"
     has_history = len(state.history) > 0
     
     return pystray.Menu(
-        # Hidden default action for double-click/single-click on the icon
-        pystray.MenuItem("Abrir Gerenciador", open_manager, default=True, visible=False),
-        pystray.MenuItem("🎞  Wallpaper Playlist", None, enabled=False),
+        pystray.MenuItem("📋  Gerenciar Playlist", open_manager, default=True),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Sublista Ativa", pystray.Menu(*playlist_items)),
         pystray.MenuItem("Tempo de Troca", pystray.Menu(
@@ -135,11 +160,11 @@ def build_menu():
             pystray.MenuItem(f"{get_order_check('shuffle')}Aleatório (Shuffle)", lambda: set_rotation_order("shuffle")),
             pystray.MenuItem(f"{get_order_check('sequential')}Sequencial", lambda: set_rotation_order("sequential"))
         )),
+        pystray.MenuItem("Monitor", pystray.Menu(*monitor_items)),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(pause_label, toggle_pause),
         pystray.MenuItem("⏮  Voltar Anterior (Win+Alt+PgUp)", play_previous, enabled=has_history),
         pystray.MenuItem("⏭  Próximo Agora (Win+Alt+PgDn)", skip_next),
-        pystray.MenuItem("📋  Gerenciar Playlist", open_manager),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Sair", quit_app),
     )
