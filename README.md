@@ -74,26 +74,31 @@ Criado automaticamente na primeira execução. Pode ser editado manualmente ou v
 
 O programa vive na bandeja do sistema. Clique no ícone para abrir o menu:
 
+- **📋 Gerenciar playlist** — abre a interface visual (no topo do menu; também abre com clique simples/duplo no ícone)
 - **Sublista Ativa (Submenu)** — escolhe qual sublista de papéis de parede usar (gerenciadas pela interface)
 - **Tempo de Troca (Submenu)** — define o tempo de permanência de cada vídeo (Duração do vídeo, 30 segundos, 1 min, 5 min, 10 min, 30 min ou 1 hora)
 - **Modo de Rotação (Submenu)** — alterna entre rotação **Aleatória (Shuffle)** ou **Sequencial** (ordem alfabética)
+- **Monitor (Submenu)** — define o monitor de destino: **Seguir Lively (Auto)** (padrão) ou fixa em um monitor específico detectado no sistema
 - **⏸ Pausar troca / ▶ Retomar troca** — congela na faixa atual, o Lively continua rodando normalmente
 - **⏮ Voltar Anterior** — retorna para o wallpaper reproduzido anteriormente usando a pilha de histórico
 - **⏭ Próximo agora** — pula para o próximo imediatamente
-- **📋 Gerenciar playlist** — abre a interface visual (também abre com clique simples no ícone)
 
 ### Gerenciador visual
 
 Interface totalmente em português para controle da biblioteca:
-- **Painel de Sublistas:** crie novas playlists zeradas (➕ Nova), renomeie (✏ Renomear) ou apague com confirmação (➖ Excluir)
+- **Ações Rápidas no Cabeçalho:**
+  - **📂 Abrir Pasta:** abre a pasta `wallpapers/` diretamente no Windows Explorer para adicionar novos vídeos
+  - **🎨 Abrir Lively:** traz a central do Lively Wallpaper para o primeiro plano via CLI
+  - **🧹 Limpar Cache:** varre e remove com total segurança miniaturas e dados de duração de vídeos já excluídos do disco (com confirmação prévia)
+  - **🔄 Recarregar:** atualiza a lista de wallpapers imediatamente
+- **Painel de Sublistas:** crie novas playlists zeradas (➕ Nova), renomeie (✏ Renomear) ou apague com confirmação (➖ Excluir) utilizando **diálogos temáticos integrados ao Catppuccin Mocha**
 - Grid de miniaturas responsivo: o número de colunas se **ajusta de forma dinâmica** ao redimensionar ou maximizar a janela (com debounce para evitar lentidão)
+- Carregamento dinâmico de miniaturas em tempo real: placeholders na tela são substituídos automaticamente assim que as imagens são geradas pela thread de fundo
 - Ativar/desativar wallpapers na sublista selecionada clicando no card ou checkbox
 - Filtro inteligente por **Todos / Ativos / Inativos** (se ajusta ao selecionar uma sublista personalizada)
 - Busca por nome e atalhos rápidos (**✓ Selecionar Todos / ✗ Desmarcar Todos**) com feedback de hover no cursor
 - **▶ Tocar** em qualquer card para ir direto àquele wallpaper
 - Badge **"▶ tocando agora"** no card atual, com scroll automático até ele ao abrir
-
-As miniaturas são geradas em background ao iniciar o programa e salvas em `thumbs/`. Na primeira execução com muitos vídeos, os cards aparecem com placeholder e vão sendo preenchidos conforme ficam prontos.
 
 ---
 
@@ -109,21 +114,9 @@ Além disso, quando a tela do Windows é bloqueada (`Win+L`) ou entra em repouso
 
 Se você usar outro app com comportamento parecido e o temporizador travar, rode o script `debug_window.py` para identificar a classe da janela problemática e adicione ao filtro em `src/utils/window_state.py`.
 
-### Limpeza da biblioteca
-A cada troca, o script apaga todos os vídeos (`Type: 7`) registrados na biblioteca do Lively em:
-- `Library/SaveData/wallpapers/`
-- `Library/SaveData/wptmp/`
-
-Wallpapers HTML nativos do Lively (`Type: 1`, como Fluids, Rain, etc.) não são tocados.
-
-### Temporizador com tempo real
-O temporizador usa `time.time()` como âncora em vez de contador de ticks. Isso evita drift acumulado e garante que o tempo pausado durante fullscreen não seja contado — o relógio só avança quando o wallpaper está realmente visível.
-
-### Quirks e Controle do Lively CLI
-- **Controle por monitor:** O script suporta o envio do argumento `--monitor <id>` caso configurado em `target_monitor` no `config.json` ou passado programmaticamente em `set_wallpaper()`.
-- **Controle de playback:** A função `set_lively_playback()` permite pausar/retomar globalmente o reprodutor do Lively usando `Lively.exe app --play <true|false>`.
-- O `setwp` só funciona com o Lively já rodando. O script detecta isso via `psutil` e abre o Lively automaticamente se necessário.
-- O Lively precisa ter sua janela "acordada" para processar o comando em algumas versões. Se o wallpaper não trocar, verifique se o Lively está minimizado vs. rodando em background.
+### Limpeza da biblioteca e cache órfão
+- **Biblioteca Lively:** A cada troca, o script apaga todos os vídeos (`Type: 7`) registrados na biblioteca temporária do Lively (`Library/SaveData/wallpapers/` e `Library/SaveData/wptmp/`). Wallpapers HTML nativos do Lively não são tocados.
+- **Cache Órfão:** A ferramenta de limpeza no Gerenciador garante que miniaturas antigas em `thumbs/` e tempos de duração no `duration_cache` de vídeos que não existem mais em `wallpapers/` possam ser limpos sem nunca alterar vídeos reais.
 
 ---
 
@@ -134,14 +127,16 @@ O temporizador usa `time.time()` como âncora em vez de contador de ticks. Isso 
 ├── src/
 │   ├── main.pyw          # Entry point, gerencia threads
 │   ├── config.py         # Carrega/salva config.json, migra chaves legadas
-│   ├── lively.py         # Integração com Lively.exe (setwp, limpeza)
+│   ├── lively.py         # Integração com Lively.exe (setwp, monitores, limpeza)
 │   ├── playlist.py       # Loop principal, temporizador, pausa
 │   ├── state.py          # Estado global (eventos de thread e variáveis)
 │   ├── ui/
 │   │   ├── tray.py       # Ícone e menu da bandeja (pystray)
 │   │   ├── manager.py    # Interface visual tkinter (grid de wallpapers)
+│   │   ├── dialogs.py    # Diálogos modais temáticos (Catppuccin Mocha)
 │   │   └── theme.py      # Paleta de cores (Catppuccin Mocha)
 │   └── utils/
+│       ├── cache.py      # Limpeza segura de miniaturas e cache órfãos
 │       ├── thumbnails.py # Geração de frames em background
 │       ├── window_state.py # Detecção de fullscreen via ctypes
 │       └── logger.py     # Log centralizado
