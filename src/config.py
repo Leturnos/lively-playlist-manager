@@ -1,5 +1,6 @@
 import os
 import json
+import threading
 from src.utils.logger import log
 
 # Paths relative to the project root
@@ -42,6 +43,8 @@ def find_lively_exe():
 DEFAULT_LIVELY_EXE = find_lively_exe()
 AVAILABLE_MODES = ["video", "30s", "1min", "5min", "10min", "30min", "1h"]
 
+_config_lock = threading.Lock()
+
 def load_config():
     """Loads configuration from disk."""
     default_config = {
@@ -53,43 +56,54 @@ def load_config():
         "current_playlist": "All Wallpapers",
         "duration_cache": {},
         "target_monitor": None,
-        "sync_lockscreen": False
+        "sync_lockscreen": False,
+        "last_played_wallpaper": None
     }
     
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            
-            # Use current keys, fallback to defaults
-            config = {
-                "lively_path": data.get("lively_path", default_config["lively_path"]),
-                "mode": data.get("mode", default_config["mode"]),
-                "active_wallpapers": data.get("active_wallpapers", default_config["active_wallpapers"]),
-                "rotation_order": data.get("rotation_order", default_config["rotation_order"]),
-                "playlists": data.get("playlists", default_config["playlists"]),
-                "current_playlist": data.get("current_playlist", default_config["current_playlist"]),
-                "duration_cache": data.get("duration_cache", default_config["duration_cache"]),
-                "target_monitor": data.get("target_monitor", default_config["target_monitor"]),
-                "sync_lockscreen": data.get("sync_lockscreen", default_config["sync_lockscreen"])
-            }
-            
-            if config["mode"] not in AVAILABLE_MODES:
-                config["mode"] = "video"
+    with _config_lock:
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
                 
-            return config
-        except Exception as e:
-            log(f"Error loading config: {e}")
-            
+                # Use current keys, fallback to defaults
+                config = {
+                    "lively_path": data.get("lively_path", default_config["lively_path"]),
+                    "mode": data.get("mode", default_config["mode"]),
+                    "active_wallpapers": data.get("active_wallpapers", default_config["active_wallpapers"]),
+                    "rotation_order": data.get("rotation_order", default_config["rotation_order"]),
+                    "playlists": data.get("playlists", default_config["playlists"]),
+                    "current_playlist": data.get("current_playlist", default_config["current_playlist"]),
+                    "duration_cache": data.get("duration_cache", default_config["duration_cache"]),
+                    "target_monitor": data.get("target_monitor", default_config["target_monitor"]),
+                    "sync_lockscreen": data.get("sync_lockscreen", default_config["sync_lockscreen"]),
+                    "last_played_wallpaper": data.get("last_played_wallpaper", default_config["last_played_wallpaper"])
+                }
+                
+                if config["mode"] not in AVAILABLE_MODES:
+                    config["mode"] = "video"
+                    
+                return config
+            except Exception as e:
+                log(f"Error loading config: {e}")
+                
     return default_config
 
 def save_config(config_data):
-    """Saves the current configuration to disk."""
-    try:
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(config_data, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        log(f"Error saving config: {e}")
+    """Saves the current configuration to disk atomically."""
+    with _config_lock:
+        tmp_file = f"{CONFIG_FILE}.tmp"
+        try:
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(config_data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_file, CONFIG_FILE)
+        except Exception as e:
+            log(f"Error saving config: {e}")
+            if os.path.exists(tmp_file):
+                try:
+                    os.remove(tmp_file)
+                except Exception:
+                    pass
 
 # Initial load
 config = load_config()

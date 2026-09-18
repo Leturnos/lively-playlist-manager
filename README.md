@@ -66,6 +66,7 @@ Criado automaticamente na primeira execução. Pode ser editado manualmente ou v
 | `duration_cache` | dicionário de `{ arquivo: segundos }` | Cache com a duração de cada vídeo (melhora performance) |
 | `target_monitor` | `null` (padrão) ou número inteiro (`0`, `1`, etc.) | Define um monitor específico para aplicar os wallpapers (omitido por padrão) |
 | `sync_lockscreen` | `true`, `false` (padrão) | Sincroniza a tela de bloqueio do Windows com o wallpaper estático ativo |
+| `last_played_wallpaper` | nome do arquivo ou `null` | Último wallpaper ativo reproduzido (usado para continuar de onde parou ao reiniciar) |
 
 > **Nota:** `mode: null` significa que nenhum modo foi configurado ainda. O programa aguarda você selecionar um pelo menu da bandeja antes de começar a trocar.
 
