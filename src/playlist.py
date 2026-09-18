@@ -1,11 +1,13 @@
 import os
 import random
 import time
+import threading
 from moviepy import VideoFileClip
 from src.config import config, WALLPAPER_DIR, load_config, save_config
 from src.utils.logger import log
 from src.utils.window_state import is_user_gaming_or_focused
 from src.lively import set_wallpaper
+from src.utils.lockscreen import sync_lockscreen_worker
 from src import state
 
 def get_video_duration(video_path: str) -> float | None:
@@ -104,6 +106,14 @@ def run_rotation_engine():
             if not set_wallpaper(video_path):
                 time.sleep(5)
                 continue
+
+            if config.get("sync_lockscreen", False):
+                threading.Thread(
+                    target=sync_lockscreen_worker,
+                    args=(video_path,),
+                    daemon=True,
+                    name="LockscreenSyncWorker"
+                ).start()
 
             try:
                 from src.ui.tray import update_menu

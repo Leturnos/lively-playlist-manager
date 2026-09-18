@@ -6,6 +6,10 @@ from src.utils.logger import log
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WALLPAPER_DIR = os.path.join(ROOT_DIR, "wallpapers")
 THUMBS_DIR = os.path.join(ROOT_DIR, "thumbs")
+STATIC_WALLPAPER_DIR = os.path.join(ROOT_DIR, "Static Wallpaper")
+LOCKSCREEN_PATH_A = os.path.join(STATIC_WALLPAPER_DIR, "current_lockscreen_a.jpg")
+LOCKSCREEN_PATH_B = os.path.join(STATIC_WALLPAPER_DIR, "current_lockscreen_b.jpg")
+CURRENT_LOCKSCREEN_PATH = LOCKSCREEN_PATH_A
 CONFIG_FILE = os.path.join(ROOT_DIR, "config.json")
 
 # Lively-specific local library paths
@@ -48,7 +52,8 @@ def load_config():
         "playlists": {},
         "current_playlist": "All Wallpapers",
         "duration_cache": {},
-        "target_monitor": None
+        "target_monitor": None,
+        "sync_lockscreen": False
     }
     
     if os.path.exists(CONFIG_FILE):
@@ -65,7 +70,8 @@ def load_config():
                 "playlists": data.get("playlists", default_config["playlists"]),
                 "current_playlist": data.get("current_playlist", default_config["current_playlist"]),
                 "duration_cache": data.get("duration_cache", default_config["duration_cache"]),
-                "target_monitor": data.get("target_monitor", default_config["target_monitor"])
+                "target_monitor": data.get("target_monitor", default_config["target_monitor"]),
+                "sync_lockscreen": data.get("sync_lockscreen", default_config["sync_lockscreen"])
             }
             
             if config["mode"] not in AVAILABLE_MODES:

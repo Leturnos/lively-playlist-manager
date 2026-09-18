@@ -1,3 +1,4 @@
+import os
 import threading
 import pystray
 from PIL import Image, ImageDraw
@@ -76,6 +77,60 @@ def set_target_monitor(mon: str | int):
     update_menu()
     state.skip_event.set()
 
+def toggle_sync_lockscreen():
+    """Toggles the lockscreen synchronization feature.
+
+    Enabling is gated on a registry permission check: if the process cannot
+    write to PersonalizationCSP, the toggle stays off and the user is notified
+    to run setup_lockscreen_permission.bat as Administrator.
+    The checkmark therefore only appears after permissions are confirmed.
+    """
+    from src.utils.lockscreen import (
+        restore_lockscreen_registry,
+        sync_lockscreen_worker,
+        check_lockscreen_permissions,
+    )
+    from src.config import WALLPAPER_DIR
+
+    currently_enabled = config.get("sync_lockscreen", False)
+
+    if not currently_enabled:
+        # Enabling: gate on registry write permission
+        if not check_lockscreen_permissions():
+            log("Lockscreen: permission denied. Run setup_lockscreen_permission.bat as Admin.")
+            if tray_icon:
+                try:
+                    tray_icon.notify(
+                        "Execute setup_lockscreen_permission.bat como Administrador para ativar as alterações.",
+                        "Tela de Bloqueio",
+                    )
+                except Exception:
+                    pass
+            # Permission not granted: abort without changing config
+            return
+
+        config["sync_lockscreen"] = True
+        save_config(config)
+        log("Lockscreen synchronization enabled")
+
+        if state.current_video:
+            video_path = os.path.join(WALLPAPER_DIR, state.current_video)
+            if os.path.exists(video_path):
+                threading.Thread(
+                    target=sync_lockscreen_worker,
+                    args=(video_path,),
+                    daemon=True,
+                    name="LockscreenManualSyncWorker",
+                ).start()
+    else:
+        # Disabling always works unconditionally
+        config["sync_lockscreen"] = False
+        save_config(config)
+        log("Lockscreen synchronization disabled")
+        restore_lockscreen_registry()
+
+    update_menu()
+
 def quit_app():
     """Signals all threads to stop and shuts down the tray icon."""
     state.stop_event.set()
@@ -142,7 +197,7 @@ def build_menu():
 
     pause_label = "▶  Retomar Troca" if state.is_paused else "⏸  Pausar Troca"
     has_history = len(state.history) > 0
-    
+
     return pystray.Menu(
         pystray.MenuItem("📋  Gerenciar Playlist", open_manager, default=True),
         pystray.Menu.SEPARATOR,
@@ -161,6 +216,11 @@ def build_menu():
             pystray.MenuItem(f"{get_order_check('sequential')}Sequencial", lambda: set_rotation_order("sequential"))
         )),
         pystray.MenuItem("Monitor", pystray.Menu(*monitor_items)),
+        pystray.MenuItem(
+            "Sincronizar Tela de Bloqueio",
+            toggle_sync_lockscreen,
+            checked=lambda item: config.get("sync_lockscreen", False),
+        ),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(pause_label, toggle_pause),
         pystray.MenuItem("⏮  Voltar Anterior (Win+Alt+PgUp)", play_previous, enabled=has_history),

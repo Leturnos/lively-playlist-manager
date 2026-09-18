@@ -65,6 +65,7 @@ Criado automaticamente na primeira execução. Pode ser editado manualmente ou v
 | `playlists` | dicionário de `{ nome: [arquivos] }` | Armazena as sublistas de wallpapers criadas |
 | `duration_cache` | dicionário de `{ arquivo: segundos }` | Cache com a duração de cada vídeo (melhora performance) |
 | `target_monitor` | `null` (padrão) ou número inteiro (`0`, `1`, etc.) | Define um monitor específico para aplicar os wallpapers (omitido por padrão) |
+| `sync_lockscreen` | `true`, `false` (padrão) | Sincroniza a tela de bloqueio do Windows com o wallpaper estático ativo |
 
 > **Nota:** `mode: null` significa que nenhum modo foi configurado ainda. O programa aguarda você selecionar um pelo menu da bandeja antes de começar a trocar.
 
@@ -79,6 +80,7 @@ O programa vive na bandeja do sistema. Clique no ícone para abrir o menu:
 - **Tempo de Troca (Submenu)** — define o tempo de permanência de cada vídeo (Duração do vídeo, 30 segundos, 1 min, 5 min, 10 min, 30 min ou 1 hora)
 - **Modo de Rotação (Submenu)** — alterna entre rotação **Aleatória (Shuffle)** ou **Sequencial** (ordem alfabética)
 - **Monitor (Submenu)** — define o monitor de destino: **Seguir Lively (Auto)** (padrão) ou fixa em um monitor específico detectado no sistema
+- **🔒 Sincronizar Tela de Bloqueio** — ativa/desativa a sincronização automática da tela de bloqueio do Windows com o wallpaper atual (logo abaixo de Monitor)
 - **⏸ Pausar troca / ▶ Retomar troca** — congela na faixa atual, o Lively continua rodando normalmente
 - **⏮ Voltar Anterior** — retorna para o wallpaper reproduzido anteriormente usando a pilha de histórico
 - **⏭ Próximo agora** — pula para o próximo imediatamente
@@ -118,6 +120,16 @@ Se você usar outro app com comportamento parecido e o temporizador travar, rode
 - **Biblioteca Lively:** A cada troca, o script apaga todos os vídeos (`Type: 7`) registrados na biblioteca temporária do Lively (`Library/SaveData/wallpapers/` e `Library/SaveData/wptmp/`). Wallpapers HTML nativos do Lively não são tocados.
 - **Cache Órfão:** A ferramenta de limpeza no Gerenciador garante que miniaturas antigas em `thumbs/` e tempos de duração no `duration_cache` de vídeos que não existem mais em `wallpapers/` possam ser limpos sem nunca alterar vídeos reais.
 
+### 🔒 Sincronização da Tela de Bloqueio (Opcional)
+Permite que o mesmo wallpaper ativo em reprodução no Lively Wallpaper seja automaticamente refletido como a imagem estática de bloqueio do Windows (em alta resolução nativa).
+
+- **Ativação:** No menu da bandeja (perto do relógio), clique em **🔒 Sincronizar Tela de Bloqueio** (logo abaixo de **Monitor**). Uma marcação `✓` confirmará a ativação.
+- **Permissão única no Windows:** As políticas de tela de bloqueio do Windows exigem escrita na chave `HKLM`. Para permitir que o aplicativo atualize a imagem transparentemente em segundo plano sem pedir confirmações de Administrador a cada troca, clique com o botão direito em `setup_lockscreen_permission.bat` na raiz do projeto e selecione **Executar como Administrador** apenas uma vez.
+- **Proteções do Sistema:**
+  - **Thread em segundo plano:** A extração do frame é 100% assíncrona; a transição de vídeo no Lively ocorre instantaneamente sem qualquer engasgo.
+  - **Gravação atômica:** O frame é gravado temporariamente e movido de forma atômica para evitar leituras corrompidas pelo Windows.
+  - **Restauração limpa:** Ao desmarcar a opção na bandeja, as chaves de bloqueio são limpas e o Windows retorna imediatamente ao seu comportamento padrão.
+
 ---
 
 ## 📁 Estrutura do projeto
@@ -137,14 +149,17 @@ Se você usar outro app com comportamento parecido e o temporizador travar, rode
 │   │   └── theme.py      # Paleta de cores (Catppuccin Mocha)
 │   └── utils/
 │       ├── cache.py      # Limpeza segura de miniaturas e cache órfãos
+│       ├── lockscreen.py # Extração em alta resolução e personalização do Windows
 │       ├── thumbnails.py # Geração de frames em background
 │       ├── window_state.py # Detecção de fullscreen via ctypes
 │       └── logger.py     # Log centralizado
 ├── wallpapers/           # Seus vídeos ficam aqui
 ├── thumbs/               # Miniaturas geradas automaticamente
+├── Static Wallpaper/     # Frames estáticos para a tela de bloqueio
 ├── Library/              # Biblioteca interna do Lively (apontada nas configurações)
 ├── config.json           # Configuração persistente
 ├── lively_playlist.vbs   # Launcher sem janela de terminal
+├── setup_lockscreen_permission.bat # Script de permissão única (UAC)
 └── pyproject.toml
 ```
 
