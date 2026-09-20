@@ -1,12 +1,17 @@
 import os
 import threading
+import tkinter as tk
+from tkinter import colorchooser
 import pystray
 from PIL import Image, ImageDraw
 from src import state
-from src.config import config, save_config
+from src.config import config, save_config, SOLID_COLOR_PRESETS
 from src.utils.logger import log
+from src.utils.solid_color import apply_solid_background
 
 tray_icon = None
+_picker_lock = threading.Lock()
+_is_picker_open = False
 
 def create_tray_icon_image():
     """Generates a procedural icon for the system tray."""
@@ -76,6 +81,46 @@ def set_target_monitor(mon: str | int):
     log(f"Target monitor changed to: {mon}")
     update_menu()
     state.skip_event.set()
+
+def set_solid_color(hex_val: str):
+    """Updates the solid background color, applies it, and updates the tray menu."""
+    apply_solid_background(hex_val)
+    log(f"Solid background color changed to: {hex_val}")
+    update_menu()
+
+def pick_custom_solid_color():
+    """Opens a native color chooser dialog in a background thread to pick a custom hex color."""
+    global _is_picker_open
+    with _picker_lock:
+        if _is_picker_open:
+            return
+        _is_picker_open = True
+
+    def _picker_worker():
+        global _is_picker_open
+        picker_root = None
+        try:
+            picker_root = tk.Tk()
+            picker_root.withdraw()
+            picker_root.attributes("-topmost", True)
+
+            initial = config.get("solid_background_color", "#18181b")
+            color = colorchooser.askcolor(color=initial, title="Escolher Cor de Fundo Sólida", parent=picker_root)
+
+            if color and color[1]:
+                set_solid_color(color[1].lower())
+        except Exception as e:
+            log(f"Error in custom color picker: {e}")
+        finally:
+            if picker_root is not None:
+                try:
+                    picker_root.destroy()
+                except Exception:
+                    pass
+            with _picker_lock:
+                _is_picker_open = False
+
+    threading.Thread(target=_picker_worker, daemon=True, name="CustomColorPickerWorker").start()
 
 def toggle_sync_lockscreen():
     """Toggles the lockscreen synchronization feature.
@@ -195,6 +240,30 @@ def build_menu():
             pystray.MenuItem(label, (lambda i=idx: lambda: set_target_monitor(i))())
         )
 
+    # Solid background color menu items
+    curr_color = config.get("solid_background_color", "#18181b").lower()
+
+    def make_color_setter(hex_val):
+        return lambda: set_solid_color(hex_val)
+
+    color_items = []
+    preset_hexes = set()
+    for label, hex_val in SOLID_COLOR_PRESETS:
+        is_sel = (curr_color == hex_val.lower())
+        check_str = "✓ " if is_sel else "   "
+        color_items.append(
+            pystray.MenuItem(f"{check_str}{label} ({hex_val})", make_color_setter(hex_val))
+        )
+        preset_hexes.add(hex_val.lower())
+
+    color_items.append(pystray.Menu.SEPARATOR)
+    is_custom = curr_color not in preset_hexes
+    custom_check = "✓ " if is_custom else "   "
+    custom_label = f"{custom_check}Personalizada... ({curr_color})" if is_custom else "Personalizada..."
+    color_items.append(
+        pystray.MenuItem(custom_label, pick_custom_solid_color)
+    )
+
     pause_label = "▶  Retomar Troca" if state.is_paused else "⏸  Pausar Troca"
     has_history = len(state.history) > 0
 
@@ -216,6 +285,7 @@ def build_menu():
             pystray.MenuItem(f"{get_order_check('sequential')}Sequencial", lambda: set_rotation_order("sequential"))
         )),
         pystray.MenuItem("Monitor", pystray.Menu(*monitor_items)),
+        pystray.MenuItem("Cor de Fundo Sólida", pystray.Menu(*color_items)),
         pystray.MenuItem(
             "Sincronizar Tela de Bloqueio",
             toggle_sync_lockscreen,

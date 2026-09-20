@@ -67,6 +67,7 @@ Criado automaticamente na primeira execução. Pode ser editado manualmente ou v
 | `target_monitor` | `null` (padrão) ou número inteiro (`0`, `1`, etc.) | Define um monitor específico para aplicar os wallpapers (omitido por padrão) |
 | `sync_lockscreen` | `true`, `false` (padrão) | Sincroniza a tela de bloqueio do Windows com o wallpaper estático ativo |
 | `last_played_wallpaper` | nome do arquivo ou `null` | Último wallpaper ativo reproduzido (usado para continuar de onde parou ao reiniciar) |
+| `solid_background_color` | string hex (ex: `"#18181b"`) | Cor sólida para papel de parede nativo e tela de bloqueio base |
 
 > **Nota:** `mode: null` significa que nenhum modo foi configurado ainda. O programa aguarda você selecionar um pelo menu da bandeja antes de começar a trocar.
 
@@ -81,7 +82,8 @@ O programa vive na bandeja do sistema. Clique no ícone para abrir o menu:
 - **Tempo de Troca (Submenu)** — define o tempo de permanência de cada vídeo (Duração do vídeo, 30 segundos, 1 min, 5 min, 10 min, 30 min ou 1 hora)
 - **Modo de Rotação (Submenu)** — alterna entre rotação **Aleatória (Shuffle)** ou **Sequencial** (ordem alfabética)
 - **Monitor (Submenu)** — define o monitor de destino: **Seguir Lively (Auto)** (padrão) ou fixa em um monitor específico detectado no sistema
-- **🔒 Sincronizar Tela de Bloqueio** — ativa/desativa a sincronização automática da tela de bloqueio do Windows com o wallpaper atual (logo abaixo de Monitor)
+- **🎨 Cor de Fundo Sólida (Submenu)** — escolhe uma cor sólida aplicada ao papel de parede nativo do Windows e à tela de bloqueio (Preto Puro, Cinza Chumbo, Azul Noturno, Cinza Ardósia ou Personalizada via seletor visual nativo)
+- **🔒 Sincronizar Tela de Bloqueio** — ativa/desativa a sincronização automática da tela de bloqueio do Windows com o wallpaper atual (logo abaixo de Cor de Fundo Sólida)
 - **⏸ Pausar troca / ▶ Retomar troca** — congela na faixa atual, o Lively continua rodando normalmente
 - **⏮ Voltar Anterior** — retorna para o wallpaper reproduzido anteriormente usando a pilha de histórico
 - **⏭ Próximo agora** — pula para o próximo imediatamente
@@ -129,7 +131,19 @@ Permite que o mesmo wallpaper ativo em reprodução no Lively Wallpaper seja aut
 - **Proteções do Sistema:**
   - **Thread em segundo plano:** A extração do frame é 100% assíncrona; a transição de vídeo no Lively ocorre instantaneamente sem qualquer engasgo.
   - **Gravação atômica:** O frame é gravado temporariamente e movido de forma atômica para evitar leituras corrompidas pelo Windows.
-  - **Restauração limpa:** Ao desmarcar a opção na bandeja, as chaves de bloqueio são limpas e o Windows retorna imediatamente ao seu comportamento padrão.
+  - **Restauração limpa:** Ao desmarcar a opção na bandeja, a tela de bloqueio retorna automaticamente à cor sólida configurada.
+
+### 🎨 Cor de Fundo Sólida & Suavização de Transições
+Durante o recarregamento de vídeos do Lively Wallpaper, o Windows expõe por milissegundos a sua área de trabalho nativa. Além disso, antes do carregamento dos utilitários na inicialização do computador, a tela de bloqueio pode exibir o fundo padrão do Windows.
+- **Geração Dinâmica em Resolução Nativa:** Utiliza o Pillow para gerar a imagem `Static Wallpaper/solid_background.png` na resolução exata do monitor principal (ex: 1920x1080), evitando borrões de interpolação do Explorer.
+- **Atualização Imediata do Buffer DWM:** Aplica o papel de parede nativo via Win32 API (`SystemParametersInfoW`) com flags `SPIF_UPDATEINIFILE | SPIF_SENDCHANGE`, forçando a atualização instantânea do Desktop.
+- **Integração com a Tela de Bloqueio:** Aplica a mesma imagem na tela de bloqueio (`PersonalizationCSP`) para que no boot o sistema já inicie no tom escuro escolhido. Caso a sincronização de vídeo esteja ativa, o vídeo assume a tela de bloqueio após o início da reprodução.
+- **Presets e Personalização:**
+  - **Preto Puro (`#000000`):** Fallback clássico.
+  - **Cinza Chumbo (`#18181b`):** Neutro moderno dark mode (Tailwind zinc-900).
+  - **Azul Noturno (`#0f172a`):** Elegante e profundo, combina com estilo acrílico/mica.
+  - **Cinza Ardósia (`#111827`):** Meio-termo técnico equilibrado.
+  - **Personalizada...:** Abre o seletor visual nativo (`tkinter.colorchooser.askcolor`) para livre escolha.
 
 ---
 
@@ -151,6 +165,7 @@ Permite que o mesmo wallpaper ativo em reprodução no Lively Wallpaper seja aut
 │   └── utils/
 │       ├── cache.py      # Limpeza segura de miniaturas e cache órfãos
 │       ├── lockscreen.py # Extração em alta resolução e personalização do Windows
+│       ├── solid_color.py # Geração nativa e aplicação de cor sólida de fundo
 │       ├── thumbnails.py # Geração de frames em background
 │       ├── window_state.py # Detecção de fullscreen via ctypes
 │       └── logger.py     # Log centralizado

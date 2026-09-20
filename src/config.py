@@ -11,7 +11,15 @@ STATIC_WALLPAPER_DIR = os.path.join(ROOT_DIR, "Static Wallpaper")
 LOCKSCREEN_PATH_A = os.path.join(STATIC_WALLPAPER_DIR, "current_lockscreen_a.jpg")
 LOCKSCREEN_PATH_B = os.path.join(STATIC_WALLPAPER_DIR, "current_lockscreen_b.jpg")
 CURRENT_LOCKSCREEN_PATH = LOCKSCREEN_PATH_A
+SOLID_BACKGROUND_PATH = os.path.join(STATIC_WALLPAPER_DIR, "solid_background.png")
 CONFIG_FILE = os.path.join(ROOT_DIR, "config.json")
+
+SOLID_COLOR_PRESETS = [
+    ("Preto Puro", "#000000"),
+    ("Cinza Chumbo", "#18181b"),
+    ("Azul Noturno", "#0f172a"),
+    ("Cinza Ardósia", "#111827"),
+]
 
 # Lively-specific local library paths
 LIVELY_LIBRARY = os.path.join(ROOT_DIR, "Library", "SaveData", "wallpapers")
@@ -57,7 +65,8 @@ def load_config():
         "duration_cache": {},
         "target_monitor": None,
         "sync_lockscreen": False,
-        "last_played_wallpaper": None
+        "last_played_wallpaper": None,
+        "solid_background_color": "#18181b"
     }
     
     with _config_lock:
@@ -77,7 +86,8 @@ def load_config():
                     "duration_cache": data.get("duration_cache", default_config["duration_cache"]),
                     "target_monitor": data.get("target_monitor", default_config["target_monitor"]),
                     "sync_lockscreen": data.get("sync_lockscreen", default_config["sync_lockscreen"]),
-                    "last_played_wallpaper": data.get("last_played_wallpaper", default_config["last_played_wallpaper"])
+                    "last_played_wallpaper": data.get("last_played_wallpaper", default_config["last_played_wallpaper"]),
+                    "solid_background_color": data.get("solid_background_color", default_config["solid_background_color"])
                 }
                 
                 if config["mode"] not in AVAILABLE_MODES:

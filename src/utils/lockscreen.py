@@ -5,7 +5,7 @@ import threading
 import winreg
 from PIL import Image
 from moviepy import VideoFileClip
-from src.config import LOCKSCREEN_PATH_A, LOCKSCREEN_PATH_B, STATIC_WALLPAPER_DIR
+from src.config import LOCKSCREEN_PATH_A, LOCKSCREEN_PATH_B, STATIC_WALLPAPER_DIR, SOLID_BACKGROUND_PATH
 from src.utils.logger import log
 from src import state
 
@@ -139,11 +139,19 @@ def set_lockscreen_registry(image_path: str) -> tuple[bool, str]:
 
 def restore_lockscreen_registry() -> bool:
     """
-    Restores the standard Windows lockscreen behavior by disabling PersonalizationCSP
-    and cleaning up LockScreenImage policy if present.
+    Restores the standard Windows lockscreen behavior or applies the configured
+    solid background color image if available.
     """
     if sys.platform != "win32":
         return False
+
+    if os.path.exists(SOLID_BACKGROUND_PATH) and os.path.getsize(SOLID_BACKGROUND_PATH) > 0:
+        success, msg = set_lockscreen_registry(SOLID_BACKGROUND_PATH)
+        if success:
+            log("Lockscreen: Restored to configured solid background color.")
+            return True
+        else:
+            log(f"Lockscreen: Could not apply solid background ({msg}), falling back to standard reset.")
 
     restored = False
     # Disable PersonalizationCSP

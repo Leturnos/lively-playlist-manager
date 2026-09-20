@@ -7,13 +7,19 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
+from src.config import config
 from src.playlist import run_rotation_engine
 from src.utils.thumbnails import background_thumbnail_generator
 from src.utils.hotkeys import start_hotkey_listener
+from src.utils.solid_color import apply_solid_background
 from src.ui.tray import start_tray
 
 def main():
     """Application entry point. Initializes threads for rotation, thumbnails, hotkeys, and the UI tray."""
+    # Prime desktop wallpaper and fallback lockscreen with configured solid color
+    solid_color = config.get("solid_background_color", "#18181b")
+    apply_solid_background(solid_color)
+
     # Start the rotation engine in the background
     rotation_thread = threading.Thread(target=run_rotation_engine, daemon=True)
     rotation_thread.start()
