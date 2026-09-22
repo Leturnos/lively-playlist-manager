@@ -83,12 +83,16 @@ def is_rect_covering(rect: tuple[int, int, int, int], target: tuple[int, int, in
 def is_grid_covered(work_area: tuple[int, int, int, int],
                     window_rects: list[tuple[int, int, int, int]],
                     tile_size: int = 50,
-                    coverage_threshold: float = 0.05) -> bool:
+                    coverage_threshold: float = 0.05,
+                    hwnds: list[int] | None = None) -> bool:
     """
     Evaluates whether the screen area is covered by windows using the Grid algorithm.
-    Divides work_area into tile_size x tile_size blocks and checks if each tile center
-    is covered by any window. Returns True if uncovered ratio <= coverage_threshold.
-    Also returns True immediately if any single window covers >= 95% of work_area.
+
+    Mirrors Lively's IsDisplayCoveredByWindowGrid:
+    1. Fast-path: if any window is OS-maximized (IsZoomed), return True immediately.
+       Falls back to geometric ≥95% coverage check when hwnd list is unavailable.
+    2. Tile check: divides work_area into tile_size×tile_size blocks and checks if
+       each tile center is covered. Returns True if uncovered ratio ≤ coverage_threshold.
     """
     left, top, right, bottom = work_area
     w = right - left
@@ -96,9 +100,19 @@ def is_grid_covered(work_area: tuple[int, int, int, int],
     if w <= 0 or h <= 0:
         return False
 
-    for rect in window_rects:
-        if is_rect_covering(rect, work_area, 0.95):
-            return True
+    # Fast-path: mirrors Lively's `topLevelWindows.Exists(NativeMethods.IsZoomed)`
+    if hwnds:
+        for hwnd in hwnds:
+            try:
+                if ctypes.windll.user32.IsZoomed(hwnd):
+                    return True
+            except Exception:
+                pass
+    else:
+        # Fallback when hwnds are unavailable: geometric coverage check
+        for rect in window_rects:
+            if is_rect_covering(rect, work_area, 0.95):
+                return True
 
     tile_size = max(10, tile_size)
     cols = max(1, (w + tile_size - 1) // tile_size)
@@ -124,10 +138,20 @@ def is_grid_covered(work_area: tuple[int, int, int, int],
     uncovered_ratio = (total_tiles - covered_count) / float(total_tiles)
     return uncovered_ratio <= coverage_threshold
 
-def get_visible_windows(target_monitor_rect: tuple[int, int, int, int] | None = None) -> list[tuple[int, int, int, int]]:
+def get_visible_windows(
+    target_monitor_rect: tuple[int, int, int, int] | None = None,
+    include_hwnds: bool = False,
+) -> list[tuple[int, int, int, int]] | list[tuple[tuple[int, int, int, int], int]]:
     """
     Enumerates top-level visible windows, filtering out minimized, cloaked,
-    and shell/desktop windows. Returns a list of (left, top, right, bottom) rects.
+    and shell/desktop windows.
+
+    Args:
+        target_monitor_rect: When provided, only windows intersecting this rect are returned.
+        include_hwnds: When True, returns list of (rect, hwnd) tuples instead of just rects.
+
+    Returns:
+        List of (left, top, right, bottom) rects, or (rect, hwnd) tuples if include_hwnds=True.
     """
     windows = []
 
@@ -153,21 +177,39 @@ def get_visible_windows(target_monitor_rect: tuple[int, int, int, int] | None = 
 
             rect = RECT()
             if ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
-                if rect.right > rect.left and rect.bottom > rect.top:
+                # Ignore invisible/tiny helper windows (e.g. 16x16 event targets, 1x1 helpers)
+                if (rect.right - rect.left) > 20 and (rect.bottom - rect.top) > 20:
                     if target_monitor_rect:
                         m_left, m_top, m_right, m_bottom = target_monitor_rect
                         if not (rect.right <= m_left or rect.left >= m_right or
                                 rect.bottom <= m_top or rect.top >= m_bottom):
-                            windows.append((rect.left, rect.top, rect.right, rect.bottom))
+                            entry = (rect.left, rect.top, rect.right, rect.bottom)
+                            windows.append((entry, hwnd) if include_hwnds else entry)
                     else:
-                        windows.append((rect.left, rect.top, rect.right, rect.bottom))
+                        entry = (rect.left, rect.top, rect.right, rect.bottom)
+                        windows.append((entry, hwnd) if include_hwnds else entry)
         except Exception:
             pass
         return True
 
     cb = WNDENUMPROC(enum_cb)
-    ctypes.windll.user32.EnumWindows(cb, 0)
+    hdesk = None
+    try:
+        hdesk = ctypes.windll.user32.OpenInputDesktop(0, False, 0x0100 | 0x0040 | 0x0004 | 0x0001 | 0x0002)
+    except Exception:
+        pass
+
+    if hdesk:
+        try:
+            ctypes.windll.user32.SetThreadDesktop(hdesk)
+            ctypes.windll.user32.EnumDesktopWindows(hdesk, cb, 0)
+        finally:
+            ctypes.windll.user32.CloseDesktop(hdesk)
+    else:
+        ctypes.windll.user32.EnumWindows(cb, 0)
+
     return windows
+
 
 def get_system_monitors() -> list[dict]:
     """
@@ -255,30 +297,33 @@ def should_pause_for_lively() -> bool:
     Determines if rotation playback should pause dynamically synchronizing
     with Lively Wallpaper's exact performance rules:
     - Screen locked / UAC prompt / screen off
-    - Battery pause (if on battery and BatteryPause is enabled)
+    - Battery pause (BatteryPause == AppRules.pause == 0)
     - Fullscreen/Focus evaluation according to ProcessMonitorAlgorithm:
         0 (foreground): checks foreground window focus / maximized / >=95% coverage
         1 (all): checks all visible windows for maximized / >=95% coverage
         2 (gamemode): checks Direct3D fullscreen game state via SHQueryUserNotificationState
-        3 (grid): evaluates 50px grid coverage or single maximized / >=95% coverage
-      All window-based pauses require AppFullscreenPause == 1 (exact Lively Playback.cs logic).
+        3 (grid): evaluates 50px grid coverage, single maximized, or app focus pause
+      All window-based pauses require AppFullscreenPause == AppRules.pause == 0 (Lively Playback.cs).
     """
     try:
         if is_system_locked():
             return True
 
-        from src.lively import get_lively_pause_rules
+        from src.lively import get_lively_pause_rules, LIVELY_APP_RULE_PAUSE
         rules = get_lively_pause_rules()
 
         # 1. Battery check (independent of window states)
-        if rules.get("battery_pause", 0) == 1 and is_on_battery():
+        # In Lively C# enum AppRules: pause = 0, ignore = 1, kill = 2
+        if rules.get("battery_pause", 1) == LIVELY_APP_RULE_PAUSE and is_on_battery():
             return True
 
-        # 2. Window-based rules master switch
         # In Lively Playback.cs:
-        # var isFullScreenPause = userSettings.Settings.AppFullscreenPause == AppRules.pause;
-        # if isFullScreenPause is False, Lively NEVER pauses for open apps/windows.
-        is_fullscreen_pause = (rules.get("app_fullscreen_pause", 1) == 1)
+        # var isFullScreenPause = userSettings.Settings.AppFullscreenPause == AppRules.pause; // 0
+        # var isFocusedAppPause = userSettings.Settings.AppFocusPause == AppRules.pause;      // 0
+        is_fullscreen_pause = (rules.get("app_fullscreen_pause", LIVELY_APP_RULE_PAUSE) == LIVELY_APP_RULE_PAUSE)
+        is_focus_pause = (rules.get("app_focus_pause", 1) == LIVELY_APP_RULE_PAUSE)
+
+        # If AppFullscreenPause is set to ignore (1), Lively NEVER pauses for open apps
         if not is_fullscreen_pause:
             return False
 
@@ -303,13 +348,22 @@ def should_pause_for_lively() -> bool:
             except (ValueError, TypeError):
                 eval_monitors = [sys_monitors[0]]
 
-        is_focus_pause = (rules.get("app_focus_pause", 0) == 1)
-        algorithm = rules.get("algorithm", 3)
+        # Ensure calling thread has access to the interactive desktop for foreground window
+        try:
+            hdesk = ctypes.windll.user32.OpenInputDesktop(0, False, 0x0100 | 0x0040 | 0x0004 | 0x0001 | 0x0002)
+            if hdesk:
+                try:
+                    ctypes.windll.user32.SetThreadDesktop(hdesk)
+                finally:
+                    ctypes.windll.user32.CloseDesktop(hdesk)
+        except Exception:
+            pass
 
-        # Check foreground window properties
+        # Resolve foreground window once — shared by both focus and coverage checks
         hwnd = ctypes.windll.user32.GetForegroundWindow()
         fg_is_desktop = True
         fg_on_target = False
+        fg_hmon = None
         if hwnd:
             class_name = ctypes.create_string_buffer(256)
             ctypes.windll.user32.GetClassNameA(hwnd, class_name, 256)
@@ -318,18 +372,24 @@ def should_pause_for_lively() -> bool:
             fg_hmon = ctypes.windll.user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
             fg_on_target = any(m["hmonitor"] == fg_hmon for m in eval_monitors)
 
+        # Focus check: if focus pause is enabled and an application is focused on target display
+        if is_focus_pause and not fg_is_desktop and fg_on_target:
+            return True
+
+        algorithm = rules.get("algorithm", 3)
+
         # Algorithm 0: Foreground Process
         if algorithm == 0:
             if fg_is_desktop or not fg_on_target:
                 return False
-            if is_focus_pause:
-                return True
             if ctypes.windll.user32.IsZoomed(hwnd):
                 return True
             rect = RECT()
             if ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
                 target_work = next((m["work"] for m in eval_monitors if m["hmonitor"] == fg_hmon), None)
-                if target_work and is_rect_covering((rect.left, rect.top, rect.right, rect.bottom), target_work, 0.95):
+                if target_work and is_rect_covering(
+                    (rect.left, rect.top, rect.right, rect.bottom), target_work, 0.95
+                ):
                     return True
             return False
 
@@ -361,12 +421,16 @@ def should_pause_for_lively() -> bool:
             tile_size = rules.get("tile_size", 50)
             coverage_threshold = rules.get("coverage_threshold", 0.05)
             for m in eval_monitors:
-                win_rects = get_visible_windows(target_monitor_rect=m["rect"])
-                if is_focus_pause and win_rects:
+                win_entries = get_visible_windows(target_monitor_rect=m["rect"], include_hwnds=True)
+                if is_focus_pause and win_entries:
                     return True
-                if is_grid_covered(m["work"], win_rects, tile_size=tile_size, coverage_threshold=coverage_threshold):
+                win_rects = [r for r, _ in win_entries]
+                win_hwnds = [h for _, h in win_entries]
+                if is_grid_covered(m["work"], win_rects, tile_size=tile_size,
+                                   coverage_threshold=coverage_threshold, hwnds=win_hwnds):
                     return True
             return False
 
     except Exception:
         return is_user_gaming_or_focused()
+

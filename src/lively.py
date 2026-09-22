@@ -13,15 +13,20 @@ LIVELY_APP_DATA = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Lively Wallp
 LIVELY_SETTINGS_PATH = os.path.join(LIVELY_APP_DATA, "Settings.json")
 LIVELY_LAYOUT_PATH = os.path.join(LIVELY_APP_DATA, "WallpaperLayout.json")
 
+# Lively C# enum AppRules: pause = 0, ignore = 1, kill = 2
+LIVELY_APP_RULE_PAUSE = 0
+LIVELY_APP_RULE_IGNORE = 1
+LIVELY_APP_RULE_KILL = 2
+
 _lively_pause_cache = {
     "mtime": 0.0,
     "rules": {
         "algorithm": 3,
         "tile_size": 50,
         "coverage_threshold": 0.05,
-        "app_focus_pause": 0,
-        "app_fullscreen_pause": 1,
-        "battery_pause": 0,
+        "app_focus_pause": LIVELY_APP_RULE_IGNORE,       # default in Lively: 1 (ignore)
+        "app_fullscreen_pause": LIVELY_APP_RULE_PAUSE,   # default in Lively: 0 (pause)
+        "battery_pause": LIVELY_APP_RULE_IGNORE,         # default in Lively: 1 (ignore)
         "display_pause_settings": 0
     }
 }
@@ -46,9 +51,9 @@ def get_lively_pause_rules(force_reload: bool = False) -> dict:
                 "algorithm": int(data.get("ProcessMonitorAlgorithm", 3)),
                 "tile_size": max(10, int(data.get("ProcessMonitorGridTileSize", 50))),
                 "coverage_threshold": float(data.get("ProcessMonitorGridTileCoverageThreshold", 0.05)),
-                "app_focus_pause": int(data.get("AppFocusPause", 0)),
-                "app_fullscreen_pause": int(data.get("AppFullscreenPause", 1)),
-                "battery_pause": int(data.get("BatteryPause", 0)),
+                "app_focus_pause": int(data.get("AppFocusPause", LIVELY_APP_RULE_IGNORE)),
+                "app_fullscreen_pause": int(data.get("AppFullscreenPause", LIVELY_APP_RULE_PAUSE)),
+                "battery_pause": int(data.get("BatteryPause", LIVELY_APP_RULE_IGNORE)),
                 "display_pause_settings": int(data.get("DisplayPauseSettings", 0))
             }
     except Exception as e:

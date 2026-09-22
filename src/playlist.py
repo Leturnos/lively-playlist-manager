@@ -200,11 +200,15 @@ def run_rotation_engine():
                     last_tick = now
 
                     if state.is_paused:
+                        # Reset tick so pause time is not counted when resuming
+                        last_tick = time.time()
                         time.sleep(1)
                         continue
                         
                     if should_pause_for_lively():
                         # Wallpaper playback is paused (grid covered, fullscreen, battery, or lockscreen); don't count this time
+                        # Reset tick so pause time is not counted when resuming
+                        last_tick = time.time()
                         time.sleep(1)
                         continue
 
