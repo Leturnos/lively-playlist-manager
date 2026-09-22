@@ -13,6 +13,49 @@ LIVELY_APP_DATA = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Lively Wallp
 LIVELY_SETTINGS_PATH = os.path.join(LIVELY_APP_DATA, "Settings.json")
 LIVELY_LAYOUT_PATH = os.path.join(LIVELY_APP_DATA, "WallpaperLayout.json")
 
+_lively_pause_cache = {
+    "mtime": 0.0,
+    "rules": {
+        "algorithm": 3,
+        "tile_size": 50,
+        "coverage_threshold": 0.05,
+        "app_focus_pause": 0,
+        "app_fullscreen_pause": 1,
+        "battery_pause": 0,
+        "display_pause_settings": 0
+    }
+}
+
+def get_lively_pause_rules(force_reload: bool = False) -> dict:
+    """
+    Reads pause and process monitor performance rules from Lively's Settings.json.
+    Caches parsed rules and invalidates based on file mtime.
+    """
+    global _lively_pause_cache
+    if not os.path.exists(LIVELY_SETTINGS_PATH):
+        return dict(_lively_pause_cache["rules"])
+
+    try:
+        current_mtime = os.path.getmtime(LIVELY_SETTINGS_PATH)
+        if force_reload or current_mtime != _lively_pause_cache["mtime"]:
+            with open(LIVELY_SETTINGS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            _lively_pause_cache["mtime"] = current_mtime
+            _lively_pause_cache["rules"] = {
+                "algorithm": int(data.get("ProcessMonitorAlgorithm", 3)),
+                "tile_size": max(10, int(data.get("ProcessMonitorGridTileSize", 50))),
+                "coverage_threshold": float(data.get("ProcessMonitorGridTileCoverageThreshold", 0.05)),
+                "app_focus_pause": int(data.get("AppFocusPause", 0)),
+                "app_fullscreen_pause": int(data.get("AppFullscreenPause", 1)),
+                "battery_pause": int(data.get("BatteryPause", 0)),
+                "display_pause_settings": int(data.get("DisplayPauseSettings", 0))
+            }
+    except Exception as e:
+        log(f"Warning reading Lively pause rules: {e}")
+
+    return dict(_lively_pause_cache["rules"])
+
 def is_lively_running() -> bool:
     """Checks if Lively Wallpaper process is active."""
     for proc in psutil.process_iter(["name"]):

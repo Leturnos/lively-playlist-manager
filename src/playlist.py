@@ -5,7 +5,7 @@ import threading
 from moviepy import VideoFileClip
 from src.config import config, WALLPAPER_DIR, load_config, save_config
 from src.utils.logger import log
-from src.utils.window_state import is_user_gaming_or_focused
+from src.utils.window_state import should_pause_for_lively
 from src.lively import set_wallpaper
 from src.utils.lockscreen import sync_lockscreen_worker
 from src import state
@@ -203,8 +203,8 @@ def run_rotation_engine():
                         time.sleep(1)
                         continue
                         
-                    if is_user_gaming_or_focused():
-                        # Desktop is likely covered by a fullscreen app; don't count this time
+                    if should_pause_for_lively():
+                        # Wallpaper playback is paused (grid covered, fullscreen, battery, or lockscreen); don't count this time
                         time.sleep(1)
                         continue
 

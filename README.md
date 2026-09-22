@@ -109,15 +109,25 @@ Interface totalmente em português para controle da biblioteca:
 
 ## 🛠️ Funcionalidades técnicas
 
-### Detecção de fullscreen & Múltiplos Monitores
-O script detecta geometricamente se há um app ou jogo ocupando a tela toda (em qualquer um dos monitores conectados via `MonitorFromWindow` e `GetMonitorInfoW` da Win32 API) e pausa o temporizador enquanto isso acontece — o Lively já pausa o wallpaper nessa situação, e o temporizador acompanha para não pular vídeos enquanto o jogo ou app estiver aberto.
-Além disso, quando a tela do Windows é bloqueada (`Win+L`) ou entra em repouso, o temporizador congela automaticamente para economizar ciclos e preservar a playlist.
+### Sincronização Dinâmica com Modos de Pause do Lively & Detecção de Tela Cheia
+O aplicativo sincroniza o temporizador da rotação em tempo real com as configurações de desempenho do Lively Wallpaper (`Settings.json`), garantindo que o cronômetro pause exatamente nos mesmos cenários em que o papel de parede animado é pausado:
 
-**Janelas ignoradas na detecção** (não tratadas como fullscreen):
+- **Algoritmos de Detecção do Lively (`ProcessMonitorAlgorithm`):**
+  - **`0` (Processo em primeiro plano / Foreground):** Mais leve; avalia exclusivamente a janela com foco ativo. Pausa se estiver maximizada ou cobrindo mais de 95% da tela monitorada.
+  - **`1` (Todos os processos / All):** Varre todas as janelas visíveis da área de trabalho e pausa se qualquer janela cobrir mais de 95% do monitor.
+  - **`2` (Modo de jogo / Direct3D):** Detecta via `SHQueryUserNotificationState` se há um jogo rodando em tela cheia exclusiva D3D (`QUNS_RUNNING_D3D_FULL_SCREEN`).
+  - **`3` (Grid de Ladrilhos 50px - padrão):** Divide a área útil de trabalho (`rcWork`) em blocos de 50x50 pixels. Se janelas visíveis (maximizadas, lado a lado em Snap, etc.) cobrirem a tela de forma que a área livre seja inferior a 5% (`coverage_threshold <= 0.05`), a rotação congela automaticamente.
+- **Regras de Foco e Tela Cheia:** Segue a lógica nativa do Lively (`Playback.cs`), onde `AppFullscreenPause` ("Outros aplicativos em tela cheia") atua como chave mestre para pausas por janelas. Se estiver desligado (`0`), o Lively e a rotação continuam rodando livremente. Se ativo (`1`), pausa por cobertura ou caso `AppFocusPause` esteja habilitado.
+- **Economia de Bateria:** Se `BatteryPause` estiver habilitado no Lively e o computador for desconectado da tomada (modo bateria via `GetSystemPowerStatus`), o temporizador congela para economizar ciclos de CPU/GPU.
+- **Múltiplos Monitores & Modos de Exibição:** Respeita a configuração de monitor (`target_monitor`) e a regra `DisplayPauseSettings` do Lively (pausar apenas no monitor onde a janela está ou em todos os monitores).
+- **Detecção de Bloqueio Seguro:** Quando a tela do Windows é bloqueada (`Win+L`) ou entra em repouso/UAC, detectado via `OpenInputDesktop`, o temporizador congela imediatamente. Ao clicar na área de trabalho desimpedida, o cronômetro flui normalmente.
+
+**Janelas ignoradas na detecção** (não causam pausa indevida):
 - `WorkerW`, `Progman`, `Shell_TrayWnd`, `Shell_SecondaryTrayWnd` — componentes da área de trabalho e barras de tarefas do Windows
+- Janelas *cloaked* (ocultas pelo DWM, como aplicativos UWP suspensos ou em outras áreas de trabalho virtuais)
 - `TMainBox` — janela overlay do **iTop Easy Desktop**, que cobre a tela toda mesmo sem nada em foco
 
-Se você usar outro app com comportamento parecido e o temporizador travar, rode o script `debug_window.py` para identificar a classe da janela problemática e adicione ao filtro em `src/utils/window_state.py`.
+Se você usar outro app com comportamento parecido e o temporizador travar, você pode inspecionar e adicionar a classe da janela ao filtro `IGNORED_CLASSES` em `src/utils/window_state.py`.
 
 ### Limpeza da biblioteca e cache órfão
 - **Biblioteca Lively:** A cada troca, o script apaga todos os vídeos (`Type: 7`) registrados na biblioteca temporária do Lively (`Library/SaveData/wallpapers/` e `Library/SaveData/wptmp/`). Wallpapers HTML nativos do Lively não são tocados.
