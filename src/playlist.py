@@ -32,6 +32,18 @@ def get_video_duration(video_path: str) -> float | None:
         log(f"ERROR getting duration for {video_path}: {e}")
         return None
 
+def compute_effective_limit(mode: str | None, duration: float) -> float:
+    """Computes the rotation time limit in seconds for a given mode and video duration."""
+    limit = {
+        "30s": 30.0,
+        "1min": 60.0,
+        "5min": 300.0,
+        "10min": 600.0,
+        "30min": 1800.0,
+        "1h": 3600.0,
+    }.get(mode or "video", float(duration))
+    return max(1.0, float(limit) - 1.0) if mode == "video" else float(limit)
+
 def get_playlist() -> list[str]:
     """Retrieves the list of active wallpaper paths, reloading config from disk."""
     # Refresh config to pick up changes from the UI manager
@@ -75,6 +87,20 @@ def run_rotation_engine():
 
             order = config.get("rotation_order", "shuffle")
             last_played = config.get("last_played_wallpaper")
+
+            # On initial boot, reconcile with lock screen ground truth if sync is active
+            if is_first_cycle and config.get("sync_lockscreen", False):
+                try:
+                    from src.utils.lockscreen import get_current_lockscreen_wallpaper
+                    lockscreen_wp = get_current_lockscreen_wallpaper()
+                    if lockscreen_wp and any(os.path.basename(p).lower() == lockscreen_wp.lower() for p in playlist):
+                        if not last_played or last_played.lower() != lockscreen_wp.lower():
+                            log(f"Boot reconciliation: Lock screen has '{lockscreen_wp}' while last played was '{last_played}'. Aligning desktop to match lock screen.")
+                            last_played = lockscreen_wp
+                            config["last_played_wallpaper"] = lockscreen_wp
+                            save_config(config)
+                except Exception as e:
+                    log(f"Warning during lockscreen boot reconciliation: {e}")
 
             # Validate last_played defensively
             has_valid_last_played = isinstance(last_played, str) and bool(last_played.strip())
@@ -169,21 +195,12 @@ def run_rotation_engine():
                 except Exception:
                     pass
 
-                mode = config.get("mode", "video")
-                limit = {
-                    "30s": 30,
-                    "1min": 60,
-                    "5min": 300,
-                    "10min": 600,
-                    "30min": 1800,
-                    "1h": 3600
-                }.get(mode, duration)
-                effective_limit = max(1, limit - 1) if mode == "video" else limit
-
                 state.skip_event.clear()
                 active_time = 0.0
-                last_tick = time.time()
+                state.current_active_time = 0.0
+                last_tick = time.monotonic()
                 last_loop_log = 0
+                is_currently_paused = False
                 
                 while True:
                     if (state.stop_event.is_set() or 
@@ -192,28 +209,37 @@ def run_rotation_engine():
                         state.play_previous_event.is_set() or
                         state.playlist_needs_reload):
                         break
+
+                    # Dynamically re-evaluate mode and limit to allow mode changes without skipping
+                    mode = config.get("mode", "video")
+                    effective_limit = compute_effective_limit(mode, duration)
+
+                    state.current_active_time = active_time
+                    state.current_effective_limit = effective_limit
+
                     if active_time >= effective_limit:
                         break
 
-                    now = time.time()
-                    delta = now - last_tick
+                    if state.stop_event.wait(0.5):
+                        break
+
+                    now = time.monotonic()
+                    # Clamp delta to at most 1.0s to avoid large jumps if OS was suspended/sleeping
+                    delta = min(now - last_tick, 1.0)
                     last_tick = now
 
-                    if state.is_paused:
-                        # Reset tick so pause time is not counted when resuming
-                        last_tick = time.time()
-                        time.sleep(1)
+                    paused = state.is_paused or should_pause_for_lively()
+                    if paused:
+                        if not is_currently_paused:
+                            is_currently_paused = True
+                            log(f"Rotation paused: {os.path.basename(video_path)} at {active_time:.1f}s / {effective_limit:.1f}s")
                         continue
-                        
-                    if should_pause_for_lively():
-                        # Wallpaper playback is paused (grid covered, fullscreen, battery, or lockscreen); don't count this time
-                        # Reset tick so pause time is not counted when resuming
-                        last_tick = time.time()
-                        time.sleep(1)
-                        continue
+                    elif is_currently_paused:
+                        is_currently_paused = False
+                        log(f"Rotation resumed: {os.path.basename(video_path)} from {active_time:.1f}s / {effective_limit:.1f}s")
 
                     active_time += delta
-                    time.sleep(0.5)
+                    state.current_active_time = active_time
 
                     # Log when a video loops (if rotation limit > duration)
                     if int(duration) > 0:

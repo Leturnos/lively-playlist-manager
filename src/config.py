@@ -11,6 +11,8 @@ STATIC_WALLPAPER_DIR = os.path.join(ROOT_DIR, "Static Wallpaper")
 LOCKSCREEN_PATH_A = os.path.join(STATIC_WALLPAPER_DIR, "current_lockscreen_a.jpg")
 LOCKSCREEN_PATH_B = os.path.join(STATIC_WALLPAPER_DIR, "current_lockscreen_b.jpg")
 CURRENT_LOCKSCREEN_PATH = LOCKSCREEN_PATH_A
+LOCKSCREEN_FRAMES_DIR = os.path.join(STATIC_WALLPAPER_DIR, "frames")
+LOCKSCREEN_STATE_FILE = os.path.join(STATIC_WALLPAPER_DIR, "lockscreen_state.json")
 SOLID_BACKGROUND_PATH = os.path.join(STATIC_WALLPAPER_DIR, "solid_background.png")
 CONFIG_FILE = os.path.join(ROOT_DIR, "config.json")
 

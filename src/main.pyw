@@ -11,14 +11,13 @@ from src.config import config
 from src.playlist import run_rotation_engine
 from src.utils.thumbnails import background_thumbnail_generator
 from src.utils.hotkeys import start_hotkey_listener
-from src.utils.solid_color import apply_solid_background
+from src.utils.solid_color import ensure_solid_background_configured
 from src.ui.tray import start_tray
 
 def main():
     """Application entry point. Initializes threads for rotation, thumbnails, hotkeys, and the UI tray."""
-    # Prime desktop wallpaper and fallback lockscreen with configured solid color
-    solid_color = config.get("solid_background_color", "#18181b")
-    apply_solid_background(solid_color)
+    # Ensure native Windows solid background color is primed without redundant disk/API writes
+    ensure_solid_background_configured()
 
     # Start the rotation engine in the background
     rotation_thread = threading.Thread(target=run_rotation_engine, daemon=True)

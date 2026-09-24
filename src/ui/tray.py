@@ -25,12 +25,11 @@ def create_tray_icon_image():
     return img
 
 def set_mode(mode: str):
-    """Updates the rotation mode and notifies the engine."""
+    """Updates the rotation mode and dynamically adjusts the active limit without skipping."""
     config["mode"] = mode
     save_config(config)
     log(f"Mode changed to: {mode}")
     update_menu()
-    state.skip_event.set()
 
 def set_rotation_order(order: str):
     """Updates the rotation order (shuffle vs sequential) and notifies the engine."""

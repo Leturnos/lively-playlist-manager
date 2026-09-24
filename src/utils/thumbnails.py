@@ -1,7 +1,7 @@
 import os
 from PIL import Image, ImageDraw
 from moviepy import VideoFileClip
-from src.config import WALLPAPER_DIR, THUMBS_DIR
+from src.config import WALLPAPER_DIR, THUMBS_DIR, LOCKSCREEN_FRAMES_DIR
 from src.state import thumbs_ready, thumbs_lock, stop_event
 from src.utils.logger import log
 
@@ -14,10 +14,11 @@ def create_placeholder():
     return img
 
 def generate_thumbnail(filename: str):
-    """Extracts a frame from a video and saves it as a JPEG thumbnail."""
+    """Extracts a frame from a video and saves it as a JPEG thumbnail, pre-caching high-res frame."""
     thumb_path = os.path.join(THUMBS_DIR, filename + ".jpg")
+    cached_frame = os.path.join(LOCKSCREEN_FRAMES_DIR, filename + ".jpg")
     
-    if os.path.exists(thumb_path):
+    if os.path.exists(thumb_path) and os.path.exists(cached_frame):
         with thumbs_lock:
             thumbs_ready[filename] = thumb_path
         return
@@ -28,13 +29,23 @@ def generate_thumbnail(filename: str):
 
     try:
         clip = VideoFileClip(video_path)
-        # Get frame at 10% of duration
-        frame = clip.get_frame(min(1.0, clip.duration * 0.1))
+        # Get frame at 10% of duration (capped at 1.0s to avoid slow seeks on long videos)
+        sample_time = min(1.0, clip.duration * 0.1) if clip.duration and clip.duration > 0 else 0
+        frame = clip.get_frame(sample_time)
         clip.close()
         
-        img = Image.fromarray(frame).resize((THUMB_W, THUMB_H), Image.Resampling.LANCZOS)
+        img = Image.fromarray(frame)
+        if img.mode in ("RGBA", "LA", "P"):
+            img = img.convert("RGB")
+
+        # Opportunistically pre-cache full-resolution frame for lockscreen
+        if not os.path.exists(cached_frame):
+            os.makedirs(LOCKSCREEN_FRAMES_DIR, exist_ok=True)
+            img.save(cached_frame, "JPEG", quality=95)
+
+        thumb_img = img.resize((THUMB_W, THUMB_H), Image.Resampling.LANCZOS)
         os.makedirs(THUMBS_DIR, exist_ok=True)
-        img.save(thumb_path, "JPEG", quality=85)
+        thumb_img.save(thumb_path, "JPEG", quality=85)
         
         with thumbs_lock:
             thumbs_ready[filename] = thumb_path

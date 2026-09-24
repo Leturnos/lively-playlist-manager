@@ -1,11 +1,21 @@
 import os
 import sys
 import uuid
+import json
+import shutil
 import threading
 import winreg
 from PIL import Image
 from moviepy import VideoFileClip
-from src.config import LOCKSCREEN_PATH_A, LOCKSCREEN_PATH_B, STATIC_WALLPAPER_DIR, SOLID_BACKGROUND_PATH
+from src.config import (
+    LOCKSCREEN_PATH_A,
+    LOCKSCREEN_PATH_B,
+    STATIC_WALLPAPER_DIR,
+    SOLID_BACKGROUND_PATH,
+    LOCKSCREEN_FRAMES_DIR,
+    LOCKSCREEN_STATE_FILE,
+    WALLPAPER_DIR,
+)
 from src.utils.logger import log
 from src import state
 
@@ -32,17 +42,35 @@ def get_next_lockscreen_path() -> str:
             pass
     return LOCKSCREEN_PATH_A
 
+def get_cached_frame_path(video_path: str) -> str:
+    """Returns the persistent high-resolution frame cache path for a video."""
+    basename = os.path.basename(video_path)
+    return os.path.join(LOCKSCREEN_FRAMES_DIR, f"{basename}.jpg")
+
 def extract_highres_frame(video_path: str, output_path: str) -> bool:
     """
     Extracts a high-resolution frame from a video and saves it atomically as a high-quality JPEG.
-    Safely converts RGBA/transparent frames (e.g. WebM) to RGB, and uses unique temporary files
-    to prevent file locking collisions.
+    Utilizes a persistent high-resolution frame cache in LOCKSCREEN_FRAMES_DIR to achieve
+    sub-5ms lockscreen updates for previously seen or pre-cached wallpapers.
     """
     if not os.path.exists(video_path):
         log(f"Lockscreen: Video file not found: {video_path}")
         return False
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    os.makedirs(LOCKSCREEN_FRAMES_DIR, exist_ok=True)
+
+    cached_frame = get_cached_frame_path(video_path)
+
+    # Fast path: copy directly from frame cache (< 5ms)
+    if os.path.exists(cached_frame) and os.path.getsize(cached_frame) > 0:
+        try:
+            shutil.copyfile(cached_frame, output_path)
+            return True
+        except Exception as e:
+            log(f"Lockscreen: Warning copying from frame cache: {e}")
+
+    # Slow path: extract frame via MoviePy and store in cache
     unique_suffix = uuid.uuid4().hex[:6]
     tmp_path = f"{output_path}.{unique_suffix}.tmp"
 
@@ -61,6 +89,12 @@ def extract_highres_frame(video_path: str, output_path: str) -> bool:
         
         # Atomic replacement to avoid corrupt locks during OS read
         if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0:
+            # Populate persistent cache first
+            try:
+                shutil.copyfile(tmp_path, cached_frame)
+            except Exception as e:
+                log(f"Lockscreen: Warning saving frame cache: {e}")
+
             os.replace(tmp_path, output_path)
             return True
         else:
@@ -188,6 +222,54 @@ def restore_lockscreen_registry() -> bool:
 
     return restored
 
+def save_lockscreen_state(video_filename: str, image_path: str):
+    """
+    Persists the currently active lock screen image and corresponding video filename.
+    Used during boot reconciliation to guarantee that desktop playback aligns
+    with the exact wallpaper visible on the Windows lock screen.
+    """
+    os.makedirs(os.path.dirname(LOCKSCREEN_STATE_FILE), exist_ok=True)
+    tmp_file = f"{LOCKSCREEN_STATE_FILE}.tmp"
+    payload = {
+        "wallpaper_filename": video_filename,
+        "image_path": os.path.abspath(image_path),
+        "timestamp": os.path.getmtime(image_path) if os.path.exists(image_path) else None,
+    }
+    try:
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_file, LOCKSCREEN_STATE_FILE)
+    except Exception as e:
+        log(f"Lockscreen: Error saving lockscreen state: {e}")
+        if os.path.exists(tmp_file):
+            try:
+                os.remove(tmp_file)
+            except Exception:
+                pass
+
+def get_current_lockscreen_wallpaper() -> str | None:
+    """
+    Retrieves the video filename recorded in lockscreen_state.json if the video file
+    actually exists in WALLPAPER_DIR. Returns None if invalid, missing, or deleted.
+    """
+    if not os.path.exists(LOCKSCREEN_STATE_FILE):
+        return None
+
+    try:
+        with open(LOCKSCREEN_STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        video_filename = data.get("wallpaper_filename")
+        if not video_filename or not isinstance(video_filename, str):
+            return None
+
+        video_path = os.path.join(WALLPAPER_DIR, video_filename)
+        if os.path.exists(video_path):
+            return video_filename
+    except Exception as e:
+        log(f"Lockscreen: Error reading lockscreen state: {e}")
+
+    return None
+
 def sync_lockscreen_worker(video_path: str):
     """
     Worker task executed in a background thread to extract the frame and update lockscreen
@@ -210,8 +292,10 @@ def sync_lockscreen_worker(video_path: str):
 
             success, msg = set_lockscreen_registry(target_path)
             if success:
+                save_lockscreen_state(os.path.basename(video_path), target_path)
                 log(f"Lockscreen synced with: {os.path.basename(video_path)} -> {os.path.basename(target_path)}")
             else:
                 log(f"Lockscreen warning: {msg}")
         except Exception as e:
             log(f"Lockscreen: Unexpected error in sync worker: {e}")
+

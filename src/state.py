@@ -15,6 +15,8 @@ playlist_needs_reload = False
 is_going_back = False
 history = []  # List of video paths
 hotkey_thread_id = None
+current_active_time = 0.0
+current_effective_limit = 0.0
 
 # Locks
 thumbs_lock = threading.Lock()

@@ -31,7 +31,27 @@ MONITOR_DEFAULTTONEAREST = 2
 SM_CMONITORS = 80
 DWMWA_CLOAKED = 14
 IGNORED_CLASSES = frozenset({
-    "WorkerW", "Progman", "Shell_TrayWnd", "TMainBox", "Shell_SecondaryTrayWnd"
+    # Desktop
+    "WorkerW",
+    "Progman",
+    # Start menu, taskview (Win10), action center, search flyouts
+    "Windows.UI.Core.CoreWindow",
+    # Taskview (Win11), Start menu (Win11), XAML island hosts
+    "XamlExplorerHostIslandWindow",
+    # Alt+tab screen (Win10)
+    "MultitaskingViewFrame",
+    # Widget window (Win11)
+    "WindowsDashboard",
+    # Taskbars
+    "Shell_TrayWnd",
+    "Shell_SecondaryTrayWnd",
+    # Systray notifyicon expanded popup / flyouts
+    "NotifyIconOverflowWindow",
+    "TopLevelWindowForOverflowXamlIsland",
+    # Third-party desktop widgets / legacy tools
+    "RainmeterMeterWindow",
+    "_cls_desk_",
+    "TMainBox",
 })
 
 WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -173,6 +193,17 @@ def get_visible_windows(
             ctypes.windll.user32.GetClassNameA(hwnd, class_name, 256)
             name = class_name.value.decode("utf-8", errors="ignore")
             if name in IGNORED_CLASSES:
+                return True
+
+            # Ignore windows with no title (e.g. background helper windows, tooltips, hidden message anchors)
+            if ctypes.windll.user32.GetWindowTextLengthW(hwnd) == 0:
+                return True
+
+            # Ignore tool windows and transparent click-through layered windows (matches Lively IsVisibleTopLevelWindows)
+            ex_style = ctypes.windll.user32.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE = -20
+            if ex_style & 0x00000080:  # WS_EX_TOOLWINDOW
+                return True
+            if (ex_style & 0x00080000) and (ex_style & 0x00000020):  # WS_EX_LAYERED and WS_EX_TRANSPARENT
                 return True
 
             rect = RECT()
@@ -397,8 +428,6 @@ def should_pause_for_lively() -> bool:
         elif algorithm == 1:
             for m in eval_monitors:
                 win_rects = get_visible_windows(target_monitor_rect=m["rect"])
-                if is_focus_pause and win_rects:
-                    return True
                 for r in win_rects:
                     if is_rect_covering(r, m["work"], 0.95):
                         return True
@@ -422,8 +451,6 @@ def should_pause_for_lively() -> bool:
             coverage_threshold = rules.get("coverage_threshold", 0.05)
             for m in eval_monitors:
                 win_entries = get_visible_windows(target_monitor_rect=m["rect"], include_hwnds=True)
-                if is_focus_pause and win_entries:
-                    return True
                 win_rects = [r for r, _ in win_entries]
                 win_hwnds = [h for _, h in win_entries]
                 if is_grid_covered(m["work"], win_rects, tile_size=tile_size,

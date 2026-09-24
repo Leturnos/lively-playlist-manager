@@ -545,20 +545,29 @@ def open_playlist_manager():
     def save_and_close():
         selected = [n for n, v in checks.items() if v.get()]
         current_pl = playlist_var.get()
+        target_pl_key = "All Wallpapers" if current_pl == "Todos os Wallpapers" else current_pl
         
-        if current_pl == "Todos os Wallpapers":
+        prev_pl = config.get("current_playlist", "All Wallpapers")
+        if target_pl_key == "All Wallpapers":
+            prev_selected = set(config.get("active_wallpapers", []) or all_files)
+            new_selected = set(selected)
+            changed = (prev_pl != target_pl_key or prev_selected != new_selected)
             config["active_wallpapers"] = [] if len(selected) == len(all_files) else selected
             config["current_playlist"] = "All Wallpapers"
         else:
             if "playlists" not in config:
                 config["playlists"] = {}
+            prev_selected = set(config.get("playlists", {}).get(current_pl, []))
+            new_selected = set(selected)
+            changed = (prev_pl != target_pl_key or prev_selected != new_selected)
             config["playlists"][current_pl] = selected
             config["current_playlist"] = current_pl
             
         save_config(config)
         log(f"Selection saved for '{current_pl}': {len(selected)} active")
-        state.playlist_needs_reload = True
-        state.skip_event.set()
+        if changed:
+            state.playlist_needs_reload = True
+            state.skip_event.set()
         on_close()
 
     footer = tk.Frame(root, bg=COLORS["base"])
