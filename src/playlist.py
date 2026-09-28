@@ -127,53 +127,111 @@ def run_rotation_engine():
                     # Initial boot: pin last played wallpaper to index 0 to match lock screen
                     remaining = [p for i, p in enumerate(playlist) if i != matched_index]
                     random.shuffle(remaining)
-                    playlist = [playlist[matched_index]] + remaining
+                    active_pool = [playlist[matched_index]] + remaining
                 else:
-                    random.shuffle(playlist)
+                    active_pool = list(playlist)
+                    random.shuffle(active_pool)
                     # Anti-repeat guard across shuffle cycle boundaries
                     if (
-                        len(playlist) > 1
+                        len(active_pool) > 1
                         and has_valid_last_played
-                        and os.path.basename(playlist[0]).lower() == last_played.lower()
+                        and os.path.basename(active_pool[0]).lower() == last_played.lower()
                     ):
-                        swap_idx = random.randint(1, len(playlist) - 1)
-                        playlist[0], playlist[swap_idx] = playlist[swap_idx], playlist[0]
+                        swap_idx = random.randint(1, len(active_pool) - 1)
+                        active_pool[0], active_pool[swap_idx] = active_pool[swap_idx], active_pool[0]
+                pool_index = 0
             else:
-                # Sequential mode
+                # Sequential mode: canonical playlist order from get_playlist()
+                active_pool = list(playlist)
                 if matched_index is not None:
                     if is_first_cycle:
                         # Initial boot: start with last played wallpaper to match lock screen
-                        start_index = matched_index
+                        pool_index = matched_index
                     else:
                         # Subsequent cycles / reloads: advance to the next wallpaper in sequence
-                        start_index = (matched_index + 1) % len(playlist)
-                    playlist = playlist[start_index:] + playlist[:start_index]
+                        pool_index = (matched_index + 1) % len(active_pool)
+                else:
+                    pool_index = 0
 
             is_first_cycle = False
+            is_initial_item = True
 
-            log(f"Playlist initialized: {len(playlist)} videos. Mode: {config['mode']}")
+            log(f"Playlist initialized: {len(active_pool)} videos. Mode: {config['mode']} ({order})")
 
-            for video_path in playlist:
-                if state.stop_event.is_set():
-                    break
-
+            while not state.stop_event.is_set():
                 if state.playlist_needs_reload:
                     state.playlist_needs_reload = False
                     break
 
-                # Handle "Play Previous" request
+                # 1. Handle "Play Previous" request
                 if state.play_previous_event.is_set():
                     state.play_previous_event.clear()
+                    state.skip_event.clear()
                     if state.history:
+                        if state.current_video:
+                            curr_full = os.path.join(WALLPAPER_DIR, state.current_video)
+                            if not state.forward_history or state.forward_history[-1] != curr_full:
+                                state.forward_history.append(curr_full)
+                                if len(state.forward_history) > 50:
+                                    state.forward_history.pop(0)
                         state.is_going_back = True
                         video_path = state.history.pop()
+                        for idx, p in enumerate(active_pool):
+                            if os.path.basename(p).lower() == os.path.basename(video_path).lower():
+                                pool_index = idx
+                                break
+                    else:
+                        continue
 
-                # Handle "Play Now" request from Manager
+                # 2. Handle "Play Now" request from Manager
                 elif state.play_specific_event.is_set():
                     state.play_specific_event.clear()
+                    state.skip_event.clear()
+                    state.forward_history.clear()
                     if state.next_video_request:
                         video_path = state.next_video_request
                         state.next_video_request = None
+                        for idx, p in enumerate(active_pool):
+                            if os.path.basename(p).lower() == os.path.basename(video_path).lower():
+                                pool_index = idx
+                                break
+                    else:
+                        continue
+
+                # 3. Handle manual "Next" request from User (skip_event)
+                elif state.skip_event.is_set():
+                    state.skip_event.clear()
+                    if state.forward_history:
+                        video_path = state.forward_history.pop()
+                        for idx, p in enumerate(active_pool):
+                            if os.path.basename(p).lower() == os.path.basename(video_path).lower():
+                                pool_index = idx
+                                break
+                    else:
+                        if order == "sequential":
+                            pool_index = (pool_index + 1) % len(active_pool)
+                            video_path = active_pool[pool_index]
+                        else:
+                            pool_index += 1
+                            if pool_index >= len(active_pool):
+                                break  # Shuffle cycle complete, break to outer loop to re-shuffle
+                            video_path = active_pool[pool_index]
+
+                # 4. Normal timer expiration / progression
+                else:
+                    state.forward_history.clear()
+                    if is_initial_item:
+                        is_initial_item = False
+                        video_path = active_pool[pool_index]
+                    else:
+                        if order == "sequential":
+                            pool_index = (pool_index + 1) % len(active_pool)
+                            video_path = active_pool[pool_index]
+                        else:
+                            pool_index += 1
+                            if pool_index >= len(active_pool):
+                                break  # Shuffle cycle complete, break to outer loop to re-shuffle
+                            video_path = active_pool[pool_index]
 
                 duration = get_video_duration(video_path)
                 if duration is None:
@@ -239,6 +297,10 @@ def run_rotation_engine():
                                         state.current_video = lock_wp
                                         config["last_played_wallpaper"] = lock_wp
                                         save_config(config)
+                                        for idx, p in enumerate(active_pool):
+                                            if os.path.basename(p).lower() == lock_wp.lower():
+                                                pool_index = idx
+                                                break
                                         active_time = 0.0
                                         duration = get_video_duration(wp_path) or duration
                             except Exception as e:

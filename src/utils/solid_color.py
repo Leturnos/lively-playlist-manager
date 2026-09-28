@@ -136,11 +136,62 @@ def apply_desktop_wallpaper(image_path: str) -> bool:
         log(f"Error applying desktop wallpaper: {e}")
         return False
 
+def disable_solid_background() -> bool:
+    """
+    Disables the solid background color feature, restoring the standard Windows
+    desktop wallpaper (img0.jpg) and clearing lock screen overrides if lockscreen sync is off.
+    """
+    if sys.platform != "win32":
+        return False
+
+    try:
+        # Default Windows wallpaper locations
+        default_wp_candidates = [
+            os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), r"Web\Wallpaper\Windows\img0.jpg"),
+            os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), r"Web\4K\Wallpaper\Windows\img0_3840x2160.jpg"),
+        ]
+        applied = False
+        for wp_path in default_wp_candidates:
+            if os.path.exists(wp_path):
+                apply_desktop_wallpaper(wp_path)
+                applied = True
+                break
+
+        if not applied:
+            # Fallback: empty string
+            ctypes.windll.user32.SystemParametersInfoW(20, 0, "", 3)
+
+        # Reset BackgroundType to 0 (Picture)
+        try:
+            with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers", 0, winreg.KEY_SET_VALUE) as key:
+                winreg.SetValueEx(key, "BackgroundType", 0, winreg.REG_DWORD, 0)
+        except Exception:
+            pass
+
+        # If sync_lockscreen is disabled, restore Windows default lock screen
+        if not config.get("sync_lockscreen", False):
+            try:
+                from src.utils.lockscreen import clear_lockscreen_registry
+                clear_lockscreen_registry()
+            except Exception as e:
+                log(f"Warning clearing lockscreen on disable: {e}")
+
+        config["solid_background_color"] = "disabled"
+        save_config(config)
+        log("Solid background color disabled; restored Windows default background.")
+        return True
+    except Exception as e:
+        log(f"Error disabling solid background: {e}")
+        return False
+
 def apply_solid_background(hex_color: str) -> bool:
     """
     Configures Windows native solid desktop color, generates fallback solid image,
     updates lockscreen (if sync is inactive), and persists setting in config.
     """
+    if hex_color == "disabled":
+        return disable_solid_background()
+
     try:
         # 1. Configure native Windows solid background (clears desktop wallpaper image)
         color_ok = apply_native_solid_color(hex_color)
@@ -166,12 +217,15 @@ def apply_solid_background(hex_color: str) -> bool:
 def ensure_solid_background_configured() -> bool:
     """
     Ensures that the Windows registry reflects the configured solid background color.
-    No-op if already fully configured, preventing disk I/O and process churn on startup.
+    No-op if already fully configured or disabled, preventing disk I/O and process churn on startup.
     """
     if sys.platform != "win32":
         return False
 
     configured_hex = config.get("solid_background_color", "#18181b")
+    if configured_hex == "disabled":
+        return True
+
     r, g, b = hex_to_rgb(configured_hex)
     expected_rgb_str = f"{r} {g} {b}"
 

@@ -171,21 +171,13 @@ def set_lockscreen_registry(image_path: str) -> tuple[bool, str]:
     else:
         return False, error_msg
 
-def restore_lockscreen_registry() -> bool:
+def clear_lockscreen_registry() -> bool:
     """
-    Restores the standard Windows lockscreen behavior or applies the configured
-    solid background color image if available.
+    Clears all custom lock screen policies from Windows registry (PersonalizationCSP and Group Policy),
+    restoring Windows Spotlight or the user's default personal lock screen image.
     """
     if sys.platform != "win32":
         return False
-
-    if os.path.exists(SOLID_BACKGROUND_PATH) and os.path.getsize(SOLID_BACKGROUND_PATH) > 0:
-        success, msg = set_lockscreen_registry(SOLID_BACKGROUND_PATH)
-        if success:
-            log("Lockscreen: Restored to configured solid background color.")
-            return True
-        else:
-            log(f"Lockscreen: Could not apply solid background ({msg}), falling back to standard reset.")
 
     restored = False
     # Disable PersonalizationCSP
@@ -221,6 +213,28 @@ def restore_lockscreen_registry() -> bool:
         pass
 
     return restored
+
+def restore_lockscreen_registry() -> bool:
+    """
+    Restores the standard Windows lockscreen behavior or applies the configured
+    solid background color image if available and not disabled.
+    """
+    if sys.platform != "win32":
+        return False
+
+    from src.config import config
+    if config.get("solid_background_color") == "disabled":
+        return clear_lockscreen_registry()
+
+    if os.path.exists(SOLID_BACKGROUND_PATH) and os.path.getsize(SOLID_BACKGROUND_PATH) > 0:
+        success, msg = set_lockscreen_registry(SOLID_BACKGROUND_PATH)
+        if success:
+            log("Lockscreen: Restored to configured solid background color.")
+            return True
+        else:
+            log(f"Lockscreen: Could not apply solid background ({msg}), falling back to standard reset.")
+
+    return clear_lockscreen_registry()
 
 def save_lockscreen_state(video_filename: str, image_path: str):
     """

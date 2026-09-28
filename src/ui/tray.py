@@ -196,71 +196,91 @@ def build_menu():
     """Constructs the system tray context menu."""
     from src.lively import get_lively_monitors
 
-    m = config.get("mode")
-    def get_check(mode_key): return "✓ " if m == mode_key else "   "
-    
-    order = config.get("rotation_order", "shuffle")
-    def get_order_check(o_key): return "✓ " if order == o_key else "   "
-    
-    current_pl = config.get("current_playlist", "All Wallpapers")
-    if current_pl == "All Wallpapers":
-        current_pl_ui = "Todos os Wallpapers"
-    else:
-        current_pl_ui = current_pl
-    def get_playlist_check(pl_key): return "✓ " if current_pl_ui == pl_key else "   "
-    
     def make_playlist_setter(p):
         return lambda: set_playlist(p)
-        
+
     playlists = config.get("playlists", {})
     playlist_items = [
-        pystray.MenuItem(f"{get_playlist_check('Todos os Wallpapers')}Todos os Wallpapers", make_playlist_setter("Todos os Wallpapers"))
+        pystray.MenuItem(
+            "Todos os Wallpapers",
+            make_playlist_setter("Todos os Wallpapers"),
+            checked=lambda item: config.get("current_playlist", "All Wallpapers") in ("All Wallpapers", "Todos os Wallpapers"),
+        )
     ]
     for pl_name in playlists.keys():
         playlist_items.append(
-            pystray.MenuItem(f"{get_playlist_check(pl_name)}{pl_name}", make_playlist_setter(pl_name))
+            pystray.MenuItem(
+                pl_name,
+                make_playlist_setter(pl_name),
+                checked=(lambda p=pl_name: lambda item: config.get("current_playlist") == p)(),
+            )
         )
-    
+
     # Monitor menu items
     curr_mon = config.get("target_monitor")
     is_auto = (curr_mon in (None, "auto"))
-    def get_mon_check(cond): return "✓ " if cond else "   "
 
     monitor_items = [
-        pystray.MenuItem(f"{get_mon_check(is_auto)}Seguir Lively (Auto)", lambda: set_target_monitor("auto"))
+        pystray.MenuItem(
+            "Seguir Lively (Auto)",
+            lambda: set_target_monitor("auto"),
+            checked=lambda item: config.get("target_monitor") in (None, "auto"),
+        )
     ]
     for mon in get_lively_monitors():
         idx = mon["index"]
         name = mon["name"]
         primary_suffix = " (Principal)" if mon.get("is_primary") else ""
-        is_selected = (not is_auto and str(curr_mon) == str(idx))
-        label = f"{get_mon_check(is_selected)}Monitor {idx}: {name}{primary_suffix}"
+        label = f"Monitor {idx}: {name}{primary_suffix}"
         monitor_items.append(
-            pystray.MenuItem(label, (lambda i=idx: lambda: set_target_monitor(i))())
+            pystray.MenuItem(
+                label,
+                (lambda i=idx: lambda: set_target_monitor(i))(),
+                checked=(lambda i=idx: lambda item: config.get("target_monitor") not in (None, "auto") and str(config.get("target_monitor")) == str(i))(),
+            )
         )
 
     # Solid background color menu items
-    curr_color = config.get("solid_background_color", "#18181b").lower()
+    curr_color = str(config.get("solid_background_color", "#18181b")).lower()
+    is_disabled = (curr_color == "disabled")
 
     def make_color_setter(hex_val):
         return lambda: set_solid_color(hex_val)
 
     color_items = []
+    color_items.append(
+        pystray.MenuItem(
+            "Desativada (Padrão do Windows)",
+            lambda: set_solid_color("disabled"),
+            checked=lambda item: str(config.get("solid_background_color", "#18181b")).lower() == "disabled",
+        )
+    )
+    color_items.append(pystray.Menu.SEPARATOR)
+
     preset_hexes = set()
     for label, hex_val in SOLID_COLOR_PRESETS:
-        is_sel = (curr_color == hex_val.lower())
-        check_str = "✓ " if is_sel else "   "
+        h_lower = hex_val.lower()
+        preset_hexes.add(h_lower)
         color_items.append(
-            pystray.MenuItem(f"{check_str}{label} ({hex_val})", make_color_setter(hex_val))
+            pystray.MenuItem(
+                f"{label} ({hex_val})",
+                make_color_setter(hex_val),
+                checked=(lambda h=h_lower: lambda item: str(config.get("solid_background_color", "#18181b")).lower() == h)(),
+            )
         )
-        preset_hexes.add(hex_val.lower())
 
     color_items.append(pystray.Menu.SEPARATOR)
-    is_custom = curr_color not in preset_hexes
-    custom_check = "✓ " if is_custom else "   "
-    custom_label = f"{custom_check}Personalizada... ({curr_color})" if is_custom else "Personalizada..."
+    is_custom = (not is_disabled and curr_color not in preset_hexes)
+    custom_label = f"Personalizada... ({curr_color})" if is_custom else "Personalizada..."
     color_items.append(
-        pystray.MenuItem(custom_label, pick_custom_solid_color)
+        pystray.MenuItem(
+            custom_label,
+            pick_custom_solid_color,
+            checked=lambda item: (
+                str(config.get("solid_background_color", "#18181b")).lower() != "disabled"
+                and str(config.get("solid_background_color", "#18181b")).lower() not in {h.lower() for _, h in SOLID_COLOR_PRESETS}
+            ),
+        )
     )
 
     pause_label = "▶  Retomar Troca" if state.is_paused else "⏸  Pausar Troca"
@@ -271,17 +291,17 @@ def build_menu():
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Sublista Ativa", pystray.Menu(*playlist_items)),
         pystray.MenuItem("Tempo de Troca", pystray.Menu(
-            pystray.MenuItem(f"{get_check('video')}Duração do Vídeo", lambda: set_mode("video")),
-            pystray.MenuItem(f"{get_check('30s')}30 segundos", lambda: set_mode("30s")),
-            pystray.MenuItem(f"{get_check('1min')}1 minuto", lambda: set_mode("1min")),
-            pystray.MenuItem(f"{get_check('5min')}5 minutos", lambda: set_mode("5min")),
-            pystray.MenuItem(f"{get_check('10min')}10 minutos", lambda: set_mode("10min")),
-            pystray.MenuItem(f"{get_check('30min')}30 minutos", lambda: set_mode("30min")),
-            pystray.MenuItem(f"{get_check('1h')}1 hora", lambda: set_mode("1h")),
+            pystray.MenuItem("Duração do Vídeo", lambda: set_mode("video"), checked=lambda item: config.get("mode") == "video"),
+            pystray.MenuItem("30 segundos", lambda: set_mode("30s"), checked=lambda item: config.get("mode") == "30s"),
+            pystray.MenuItem("1 minuto", lambda: set_mode("1min"), checked=lambda item: config.get("mode") == "1min"),
+            pystray.MenuItem("5 minutos", lambda: set_mode("5min"), checked=lambda item: config.get("mode") == "5min"),
+            pystray.MenuItem("10 minutos", lambda: set_mode("10min"), checked=lambda item: config.get("mode") == "10min"),
+            pystray.MenuItem("30 minutos", lambda: set_mode("30min"), checked=lambda item: config.get("mode") == "30min"),
+            pystray.MenuItem("1 hora", lambda: set_mode("1h"), checked=lambda item: config.get("mode") == "1h"),
         )),
         pystray.MenuItem("Modo de Rotação", pystray.Menu(
-            pystray.MenuItem(f"{get_order_check('shuffle')}Aleatório (Shuffle)", lambda: set_rotation_order("shuffle")),
-            pystray.MenuItem(f"{get_order_check('sequential')}Sequencial", lambda: set_rotation_order("sequential"))
+            pystray.MenuItem("Aleatório (Shuffle)", lambda: set_rotation_order("shuffle"), checked=lambda item: config.get("rotation_order", "shuffle") == "shuffle"),
+            pystray.MenuItem("Sequencial", lambda: set_rotation_order("sequential"), checked=lambda item: config.get("rotation_order", "shuffle") == "sequential"),
         )),
         pystray.MenuItem("Monitor", pystray.Menu(*monitor_items)),
         pystray.MenuItem("Cor de Fundo Sólida", pystray.Menu(*color_items)),
