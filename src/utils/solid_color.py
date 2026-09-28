@@ -59,6 +59,13 @@ def apply_native_solid_color(hex_color: str) -> bool:
         log(f"Warning: SetSysColors failed: {e}")
 
     try:
+        # Clear wallpaper image via SPI_SETDESKWALLPAPER with empty string
+        # This instructs Windows DWM/Explorer to render the solid background color
+        ctypes.windll.user32.SystemParametersInfoW(20, 0, "", 3)
+    except Exception as e:
+        log(f"Warning: SystemParametersInfoW clear failed: {e}")
+
+    try:
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, r"Control Panel\Colors", 0, winreg.KEY_SET_VALUE) as key:
             winreg.SetValueEx(key, "Background", 0, winreg.REG_SZ, rgb_str)
 
@@ -66,6 +73,7 @@ def apply_native_solid_color(hex_color: str) -> bool:
             winreg.SetValueEx(key, "BackgroundType", 0, winreg.REG_DWORD, 1)
 
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, r"Control Panel\Desktop", 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, "WallPaper", 0, winreg.REG_SZ, "")
             winreg.SetValueEx(key, "WallpaperStyle", 0, winreg.REG_SZ, "0")
             winreg.SetValueEx(key, "TileWallpaper", 0, winreg.REG_SZ, "0")
         return True
@@ -130,17 +138,15 @@ def apply_desktop_wallpaper(image_path: str) -> bool:
 
 def apply_solid_background(hex_color: str) -> bool:
     """
-    Generates the solid color image, updates native Windows desktop color,
-    updates desktop wallpaper image fallback, updates lockscreen (if sync is inactive),
-    and persists setting in config.
+    Configures Windows native solid desktop color, generates fallback solid image,
+    updates lockscreen (if sync is inactive), and persists setting in config.
     """
     try:
-        # 1. Configure native Windows solid background
-        apply_native_solid_color(hex_color)
+        # 1. Configure native Windows solid background (clears desktop wallpaper image)
+        color_ok = apply_native_solid_color(hex_color)
 
-        # 2. Generate and apply image for shell / lockscreen fallback
+        # 2. Generate fallback image for lockscreen fallback
         img_path = generate_solid_image(hex_color)
-        wp_ok = apply_desktop_wallpaper(img_path)
 
         # 3. If sync_lockscreen is disabled or before a video is played, apply to lock screen
         if not config.get("sync_lockscreen", False):
@@ -152,7 +158,7 @@ def apply_solid_background(hex_color: str) -> bool:
 
         config["solid_background_color"] = hex_color.lower()
         save_config(config)
-        return wp_ok
+        return color_ok
     except Exception as e:
         log(f"Error applying solid background: {e}")
         return False
@@ -160,7 +166,7 @@ def apply_solid_background(hex_color: str) -> bool:
 def ensure_solid_background_configured() -> bool:
     """
     Ensures that the Windows registry reflects the configured solid background color.
-    No-op if already configured, preventing disk I/O and process churn on startup.
+    No-op if already fully configured, preventing disk I/O and process churn on startup.
     """
     if sys.platform != "win32":
         return False
@@ -172,8 +178,20 @@ def ensure_solid_background_configured() -> bool:
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Control Panel\Colors", 0, winreg.KEY_QUERY_VALUE) as key:
             current_color, _ = winreg.QueryValueEx(key, "Background")
-            if current_color.strip() == expected_rgb_str:
-                return True
+            if current_color.strip() != expected_rgb_str:
+                return apply_solid_background(configured_hex)
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers", 0, winreg.KEY_QUERY_VALUE) as key:
+            bg_type, _ = winreg.QueryValueEx(key, "BackgroundType")
+            if bg_type != 1:
+                return apply_solid_background(configured_hex)
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Control Panel\Desktop", 0, winreg.KEY_QUERY_VALUE) as key:
+            wp, _ = winreg.QueryValueEx(key, "WallPaper")
+            if wp != "":
+                return apply_solid_background(configured_hex)
+
+        return True
     except Exception:
         pass
 

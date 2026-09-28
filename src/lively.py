@@ -277,3 +277,36 @@ def set_wallpaper(video_path: str, monitor: int | str | None = None) -> bool:
         log(f"ERROR setting wallpaper: {e}")
         return False
 
+def get_lively_current_wallpaper() -> str | None:
+    """
+    Reads Lively's WallpaperLayout.json and inspects the LivelyInfo.json of the active wallpaper
+    to determine the filename of the video currently playing on the desktop.
+    Returns the video basename (e.g. 'video.mp4') or None if unavailable.
+    """
+    if not os.path.exists(LIVELY_LAYOUT_PATH):
+        return None
+
+    try:
+        with open(LIVELY_LAYOUT_PATH, "r", encoding="utf-8") as f:
+            layout_data = json.load(f)
+
+        if not isinstance(layout_data, list):
+            return None
+
+        # Look for the primary or first active monitor
+        for item in layout_data:
+            info_folder = item.get("LivelyInfoPath")
+            if not info_folder or not os.path.exists(info_folder):
+                continue
+            info_json = os.path.join(info_folder, "LivelyInfo.json")
+            if os.path.exists(info_json):
+                with open(info_json, "r", encoding="utf-8") as inf:
+                    info = json.load(inf)
+                file_name = info.get("FileName")
+                if file_name and isinstance(file_name, str):
+                    return file_name
+    except Exception as e:
+        log(f"Warning reading Lively current wallpaper: {e}")
+
+    return None
+

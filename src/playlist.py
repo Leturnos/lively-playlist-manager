@@ -5,9 +5,13 @@ import threading
 from moviepy import VideoFileClip
 from src.config import config, WALLPAPER_DIR, load_config, save_config
 from src.utils.logger import log
-from src.utils.window_state import should_pause_for_lively
-from src.lively import set_wallpaper
-from src.utils.lockscreen import sync_lockscreen_worker
+from src.utils.window_state import should_pause_for_lively, is_system_locked
+from src.lively import set_wallpaper, get_lively_current_wallpaper
+from src.utils.lockscreen import (
+    sync_lockscreen_worker,
+    sync_lockscreen_now,
+    get_current_lockscreen_wallpaper,
+)
 from src import state
 
 def get_video_duration(video_path: str) -> float | None:
@@ -91,11 +95,17 @@ def run_rotation_engine():
             # On initial boot, reconcile with lock screen ground truth if sync is active
             if is_first_cycle and config.get("sync_lockscreen", False):
                 try:
-                    from src.utils.lockscreen import get_current_lockscreen_wallpaper
                     lockscreen_wp = get_current_lockscreen_wallpaper()
                     if lockscreen_wp and any(os.path.basename(p).lower() == lockscreen_wp.lower() for p in playlist):
+                        desktop_wp = get_lively_current_wallpaper()
+                        if desktop_wp and desktop_wp.lower() != lockscreen_wp.lower():
+                            log(f"Boot reconciliation: Lock screen has '{lockscreen_wp}' but Lively has '{desktop_wp}'. Aligning desktop to match lock screen.")
+                            wp_path = os.path.join(WALLPAPER_DIR, lockscreen_wp)
+                            if os.path.exists(wp_path):
+                                set_wallpaper(wp_path)
+
                         if not last_played or last_played.lower() != lockscreen_wp.lower():
-                            log(f"Boot reconciliation: Lock screen has '{lockscreen_wp}' while last played was '{last_played}'. Aligning desktop to match lock screen.")
+                            log(f"Boot reconciliation: Aligning config last_played to '{lockscreen_wp}'.")
                             last_played = lockscreen_wp
                             config["last_played_wallpaper"] = lockscreen_wp
                             save_config(config)
@@ -171,6 +181,14 @@ def run_rotation_engine():
 
                 log(f"Next wallpaper: {os.path.basename(video_path)} ({duration:.1f}s)")
 
+                # Synchronize lock screen BEFORE changing wallpaper so that the lock screen
+                # is primed immediately (cached frames take ~2ms). Eliminates shutdown race conditions.
+                if config.get("sync_lockscreen", False):
+                    try:
+                        sync_lockscreen_now(video_path)
+                    except Exception as e:
+                        log(f"Warning syncing lockscreen: {e}")
+
                 if not set_wallpaper(video_path):
                     time.sleep(5)
                     continue
@@ -180,14 +198,6 @@ def run_rotation_engine():
                 if config.get("last_played_wallpaper") != current_basename:
                     config["last_played_wallpaper"] = current_basename
                     save_config(config)
-
-                if config.get("sync_lockscreen", False):
-                    threading.Thread(
-                        target=sync_lockscreen_worker,
-                        args=(video_path,),
-                        daemon=True,
-                        name="LockscreenSyncWorker"
-                    ).start()
 
                 try:
                     from src.ui.tray import update_menu
@@ -201,6 +211,7 @@ def run_rotation_engine():
                 last_tick = time.monotonic()
                 last_loop_log = 0
                 is_currently_paused = False
+                was_system_locked = False
                 
                 while True:
                     if (state.stop_event.is_set() or 
@@ -209,6 +220,29 @@ def run_rotation_engine():
                         state.play_previous_event.is_set() or
                         state.playlist_needs_reload):
                         break
+
+                    # Check if system was locked and is now unlocked
+                    locked = is_system_locked()
+                    if locked:
+                        was_system_locked = True
+                    elif was_system_locked:
+                        was_system_locked = False
+                        if config.get("sync_lockscreen", False):
+                            try:
+                                lock_wp = get_current_lockscreen_wallpaper()
+                                desktop_wp = get_lively_current_wallpaper() or state.current_video
+                                if lock_wp and desktop_wp and lock_wp.lower() != desktop_wp.lower():
+                                    log(f"Unlock reconciliation: Lock screen '{lock_wp}' != Desktop '{desktop_wp}'. Aligning desktop.")
+                                    wp_path = os.path.join(WALLPAPER_DIR, lock_wp)
+                                    if os.path.exists(wp_path):
+                                        set_wallpaper(wp_path)
+                                        state.current_video = lock_wp
+                                        config["last_played_wallpaper"] = lock_wp
+                                        save_config(config)
+                                        active_time = 0.0
+                                        duration = get_video_duration(wp_path) or duration
+                            except Exception as e:
+                                log(f"Warning during unlock reconciliation: {e}")
 
                     # Dynamically re-evaluate mode and limit to allow mode changes without skipping
                     mode = config.get("mode", "video")

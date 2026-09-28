@@ -224,16 +224,32 @@ def restore_lockscreen_registry() -> bool:
 
 def save_lockscreen_state(video_filename: str, image_path: str):
     """
-    Persists the currently active lock screen image and corresponding video filename.
-    Used during boot reconciliation to guarantee that desktop playback aligns
-    with the exact wallpaper visible on the Windows lock screen.
+    Persists the currently active lock screen image, corresponding video filename,
+    and slot mappings. Used during boot reconciliation to guarantee that desktop playback
+    aligns with the exact wallpaper visible on the Windows lock screen.
     """
     os.makedirs(os.path.dirname(LOCKSCREEN_STATE_FILE), exist_ok=True)
     tmp_file = f"{LOCKSCREEN_STATE_FILE}.tmp"
+
+    slots = {}
+    if os.path.exists(LOCKSCREEN_STATE_FILE):
+        try:
+            with open(LOCKSCREEN_STATE_FILE, "r", encoding="utf-8") as f:
+                prev_data = json.load(f)
+                slots = prev_data.get("slots", {})
+                if not isinstance(slots, dict):
+                    slots = {}
+        except Exception:
+            slots = {}
+
+    slot_name = os.path.basename(image_path).lower()
+    slots[slot_name] = video_filename
+
     payload = {
         "wallpaper_filename": video_filename,
         "image_path": os.path.abspath(image_path),
         "timestamp": os.path.getmtime(image_path) if os.path.exists(image_path) else None,
+        "slots": slots,
     }
     try:
         with open(tmp_file, "w", encoding="utf-8") as f:
@@ -249,53 +265,77 @@ def save_lockscreen_state(video_filename: str, image_path: str):
 
 def get_current_lockscreen_wallpaper() -> str | None:
     """
-    Retrieves the video filename recorded in lockscreen_state.json if the video file
-    actually exists in WALLPAPER_DIR. Returns None if invalid, missing, or deleted.
+    Retrieves the video filename currently active on the Windows lock screen.
+    Queries Windows PersonalizationCSP registry as the primary source of truth,
+    mapping the active image path back to the originating video via lockscreen_state.json.
+    Returns None if invalid, missing, or if the video file does not exist.
     """
-    if not os.path.exists(LOCKSCREEN_STATE_FILE):
-        return None
+    state_data = {}
+    if os.path.exists(LOCKSCREEN_STATE_FILE):
+        try:
+            with open(LOCKSCREEN_STATE_FILE, "r", encoding="utf-8") as f:
+                state_data = json.load(f)
+        except Exception as e:
+            log(f"Lockscreen: Error reading lockscreen state: {e}")
 
-    try:
-        with open(LOCKSCREEN_STATE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        video_filename = data.get("wallpaper_filename")
-        if not video_filename or not isinstance(video_filename, str):
-            return None
+    # 1. Query Windows PersonalizationCSP registry for the ground-truth active lockscreen image
+    reg_image_path = None
+    if sys.platform == "win32":
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, CSP_REG_KEY, 0, REG_ACCESS_READ) as key:
+                reg_image_path, _ = winreg.QueryValueEx(key, "LockScreenImagePath")
+        except Exception:
+            pass
 
+    video_filename = None
+    if reg_image_path:
+        reg_slot = os.path.basename(reg_image_path).lower()
+        slots = state_data.get("slots", {})
+        if isinstance(slots, dict) and reg_slot in slots:
+            video_filename = slots[reg_slot]
+        elif state_data.get("image_path") and os.path.basename(state_data["image_path"]).lower() == reg_slot:
+            video_filename = state_data.get("wallpaper_filename")
+
+    # 2. Fallback to state_data's recorded wallpaper_filename
+    if not video_filename:
+        video_filename = state_data.get("wallpaper_filename")
+
+    if video_filename and isinstance(video_filename, str):
         video_path = os.path.join(WALLPAPER_DIR, video_filename)
         if os.path.exists(video_path):
             return video_filename
-    except Exception as e:
-        log(f"Lockscreen: Error reading lockscreen state: {e}")
 
     return None
 
-def sync_lockscreen_worker(video_path: str):
+def sync_lockscreen_now(video_path: str) -> bool:
     """
-    Worker task executed in a background thread to extract the frame and update lockscreen
-    without delaying or freezing the main Lively playback engine.
-    Serialized with a lock and guards against out-of-order execution from skipped videos.
+    Synchronously updates the Windows lock screen to match video_path.
+    If the video frame is pre-cached in LOCKSCREEN_FRAMES_DIR, this completes
+    in ~2-4ms without dropping frames or delaying the playback loop.
+    Returns True if successfully updated, False otherwise.
     """
     with _sync_lock:
-        # Avoid stale updates if user rapidly skipped to another video
-        if state.current_video and os.path.basename(video_path) != state.current_video:
-            return
-
         try:
             target_path = get_next_lockscreen_path()
             if not extract_highres_frame(video_path, target_path):
-                return
-
-            # Double-check staleness after potentially slow extraction
-            if state.current_video and os.path.basename(video_path) != state.current_video:
-                return
+                return False
 
             success, msg = set_lockscreen_registry(target_path)
             if success:
                 save_lockscreen_state(os.path.basename(video_path), target_path)
                 log(f"Lockscreen synced with: {os.path.basename(video_path)} -> {os.path.basename(target_path)}")
+                return True
             else:
                 log(f"Lockscreen warning: {msg}")
+                return False
         except Exception as e:
-            log(f"Lockscreen: Unexpected error in sync worker: {e}")
+            log(f"Lockscreen: Unexpected error in sync: {e}")
+            return False
+
+def sync_lockscreen_worker(video_path: str):
+    """
+    Worker task to update lockscreen.
+    Serialized with a lock and guards against out-of-order execution from skipped videos.
+    """
+    sync_lockscreen_now(video_path)
 
