@@ -68,7 +68,8 @@ def load_config():
         "target_monitor": None,
         "sync_lockscreen": False,
         "last_played_wallpaper": None,
-        "solid_background_color": "#18181b"
+        "solid_background_color": "#18181b",
+        "desktop_background_mode": "sync_wallpaper"
     }
     
     with _config_lock:
@@ -77,6 +78,14 @@ def load_config():
                 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 
+                # Derive default background mode if not present
+                raw_bg_mode = data.get("desktop_background_mode")
+                if not raw_bg_mode:
+                    if data.get("solid_background_color") == "disabled":
+                        raw_bg_mode = "disabled"
+                    else:
+                        raw_bg_mode = "sync_wallpaper"
+
                 # Use current keys, fallback to defaults
                 config = {
                     "lively_path": data.get("lively_path", default_config["lively_path"]),
@@ -89,7 +98,8 @@ def load_config():
                     "target_monitor": data.get("target_monitor", default_config["target_monitor"]),
                     "sync_lockscreen": data.get("sync_lockscreen", default_config["sync_lockscreen"]),
                     "last_played_wallpaper": data.get("last_played_wallpaper", default_config["last_played_wallpaper"]),
-                    "solid_background_color": data.get("solid_background_color", default_config["solid_background_color"])
+                    "solid_background_color": data.get("solid_background_color", default_config["solid_background_color"]),
+                    "desktop_background_mode": raw_bg_mode
                 }
                 
                 if config["mode"] not in AVAILABLE_MODES:

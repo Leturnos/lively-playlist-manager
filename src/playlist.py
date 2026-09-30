@@ -103,6 +103,12 @@ def run_rotation_engine():
                             wp_path = os.path.join(WALLPAPER_DIR, lockscreen_wp)
                             if os.path.exists(wp_path):
                                 set_wallpaper(wp_path)
+                                if config.get("desktop_background_mode", "sync_wallpaper") == "sync_wallpaper":
+                                    try:
+                                        from src.utils.solid_color import sync_desktop_wallpaper_now
+                                        sync_desktop_wallpaper_now(wp_path)
+                                    except Exception:
+                                        pass
 
                         if not last_played or last_played.lower() != lockscreen_wp.lower():
                             log(f"Boot reconciliation: Aligning config last_played to '{lockscreen_wp}'.")
@@ -239,7 +245,16 @@ def run_rotation_engine():
 
                 log(f"Next wallpaper: {os.path.basename(video_path)} ({duration:.1f}s)")
 
-                # Synchronize lock screen BEFORE changing wallpaper so that the lock screen
+                # 1. Synchronize desktop background frame BEFORE changing wallpaper in Lively.
+                # This primes Windows DWM/Explorer so the transition reveals the new wallpaper frame immediately.
+                if config.get("desktop_background_mode", "sync_wallpaper") == "sync_wallpaper":
+                    try:
+                        from src.utils.solid_color import sync_desktop_wallpaper_now
+                        sync_desktop_wallpaper_now(video_path)
+                    except Exception as e:
+                        log(f"Warning syncing desktop wallpaper: {e}")
+
+                # 2. Synchronize lock screen BEFORE changing wallpaper so that the lock screen
                 # is primed immediately (cached frames take ~2ms). Eliminates shutdown race conditions.
                 if config.get("sync_lockscreen", False):
                     try:
@@ -294,6 +309,12 @@ def run_rotation_engine():
                                     wp_path = os.path.join(WALLPAPER_DIR, lock_wp)
                                     if os.path.exists(wp_path):
                                         set_wallpaper(wp_path)
+                                        if config.get("desktop_background_mode", "sync_wallpaper") == "sync_wallpaper":
+                                            try:
+                                                from src.utils.solid_color import sync_desktop_wallpaper_now
+                                                sync_desktop_wallpaper_now(wp_path)
+                                            except Exception:
+                                                pass
                                         state.current_video = lock_wp
                                         config["last_played_wallpaper"] = lock_wp
                                         save_config(config)

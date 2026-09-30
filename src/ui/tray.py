@@ -81,8 +81,33 @@ def set_target_monitor(mon: str | int):
     update_menu()
     state.skip_event.set()
 
+def set_desktop_background_mode(mode: str):
+    """Updates desktop background mode ('sync_wallpaper', 'solid_color', or 'disabled')."""
+    config["desktop_background_mode"] = mode
+    save_config(config)
+    if mode == "sync_wallpaper":
+        from src.utils.solid_color import sync_desktop_wallpaper_now
+        curr_video = state.current_video or config.get("last_played_wallpaper")
+        if curr_video:
+            from src.config import WALLPAPER_DIR
+            wp_path = os.path.join(WALLPAPER_DIR, curr_video)
+            if os.path.exists(wp_path):
+                sync_desktop_wallpaper_now(wp_path)
+        log("Desktop background mode set to: sync_wallpaper")
+    elif mode == "disabled":
+        from src.utils.solid_color import disable_solid_background
+        disable_solid_background()
+        log("Desktop background mode set to: disabled (Windows default)")
+    update_menu()
+
 def set_solid_color(hex_val: str):
     """Updates the solid background color, applies it, and updates the tray menu."""
+    if hex_val == "disabled":
+        set_desktop_background_mode("disabled")
+        return
+
+    from src.utils.solid_color import apply_solid_background
+    config["desktop_background_mode"] = "solid_color"
     apply_solid_background(hex_val)
     log(f"Solid background color changed to: {hex_val}")
     update_menu()
@@ -240,48 +265,54 @@ def build_menu():
             )
         )
 
-    # Solid background color menu items
+    # Desktop background mode menu items
+    curr_bg_mode = config.get("desktop_background_mode", "sync_wallpaper")
     curr_color = str(config.get("solid_background_color", "#18181b")).lower()
-    is_disabled = (curr_color == "disabled")
 
     def make_color_setter(hex_val):
         return lambda: set_solid_color(hex_val)
 
-    color_items = []
-    color_items.append(
-        pystray.MenuItem(
-            "Desativada (Padrão do Windows)",
-            lambda: set_solid_color("disabled"),
-            checked=lambda item: str(config.get("solid_background_color", "#18181b")).lower() == "disabled",
-        )
-    )
-    color_items.append(pystray.Menu.SEPARATOR)
-
+    solid_color_submenu = []
     preset_hexes = set()
     for label, hex_val in SOLID_COLOR_PRESETS:
         h_lower = hex_val.lower()
         preset_hexes.add(h_lower)
-        color_items.append(
+        solid_color_submenu.append(
             pystray.MenuItem(
                 f"{label} ({hex_val})",
                 make_color_setter(hex_val),
-                checked=(lambda h=h_lower: lambda item: str(config.get("solid_background_color", "#18181b")).lower() == h)(),
+                checked=(lambda h=h_lower: lambda item: curr_bg_mode == "solid_color" and curr_color == h)(),
             )
         )
 
-    color_items.append(pystray.Menu.SEPARATOR)
-    is_custom = (not is_disabled and curr_color not in preset_hexes)
+    solid_color_submenu.append(pystray.Menu.SEPARATOR)
+    is_custom = (curr_bg_mode == "solid_color" and curr_color not in preset_hexes)
     custom_label = f"Personalizada... ({curr_color})" if is_custom else "Personalizada..."
-    color_items.append(
+    solid_color_submenu.append(
         pystray.MenuItem(
             custom_label,
             pick_custom_solid_color,
-            checked=lambda item: (
-                str(config.get("solid_background_color", "#18181b")).lower() != "disabled"
-                and str(config.get("solid_background_color", "#18181b")).lower() not in {h.lower() for _, h in SOLID_COLOR_PRESETS}
-            ),
+            checked=lambda item: curr_bg_mode == "solid_color" and curr_color not in preset_hexes,
         )
     )
+
+    desktop_bg_items = [
+        pystray.MenuItem(
+            "🖼  Sincronizar com Wallpaper (Recomendado)",
+            lambda: set_desktop_background_mode("sync_wallpaper"),
+            checked=lambda item: config.get("desktop_background_mode", "sync_wallpaper") == "sync_wallpaper",
+        ),
+        pystray.MenuItem(
+            "⬛  Cor Sólida",
+            pystray.Menu(*solid_color_submenu),
+        ),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem(
+            "Desativado (Padrão do Windows)",
+            lambda: set_desktop_background_mode("disabled"),
+            checked=lambda item: config.get("desktop_background_mode", "sync_wallpaper") == "disabled",
+        ),
+    ]
 
     pause_label = "▶  Retomar Troca" if state.is_paused else "⏸  Pausar Troca"
     has_history = len(state.history) > 0
@@ -304,7 +335,7 @@ def build_menu():
             pystray.MenuItem("Sequencial", lambda: set_rotation_order("sequential"), checked=lambda item: config.get("rotation_order", "shuffle") == "sequential"),
         )),
         pystray.MenuItem("Monitor", pystray.Menu(*monitor_items)),
-        pystray.MenuItem("Cor de Fundo Sólida", pystray.Menu(*color_items)),
+        pystray.MenuItem("Fundo da Área de Trabalho", pystray.Menu(*desktop_bg_items)),
         pystray.MenuItem(
             "Sincronizar Tela de Bloqueio",
             toggle_sync_lockscreen,

@@ -122,11 +122,25 @@ def apply_desktop_wallpaper(image_path: str) -> bool:
         return False
 
     try:
+        # Configure registry so Windows Explorer / DWM knows it's an image, not solid color
+        try:
+            with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers", 0, winreg.KEY_SET_VALUE) as key:
+                winreg.SetValueEx(key, "BackgroundType", 0, winreg.REG_DWORD, 0)
+        except Exception:
+            pass
+
+        try:
+            with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, r"Control Panel\Desktop", 0, winreg.KEY_SET_VALUE) as key:
+                winreg.SetValueEx(key, "WallpaperStyle", 0, winreg.REG_SZ, "10")  # 10 = Fill
+                winreg.SetValueEx(key, "TileWallpaper", 0, winreg.REG_SZ, "0")
+        except Exception:
+            pass
+
         # SPI_SETDESKWALLPAPER = 20
         # SPIF_UPDATEINIFILE (0x01) | SPIF_SENDCHANGE (0x02) = 3
         result = ctypes.windll.user32.SystemParametersInfoW(20, 0, abs_path, 3)
         if result:
-            log(f"Desktop wallpaper updated to solid color: {abs_path}")
+            log(f"Desktop wallpaper updated: {abs_path}")
             return True
         else:
             err = ctypes.GetLastError()
@@ -134,6 +148,35 @@ def apply_desktop_wallpaper(image_path: str) -> bool:
             return False
     except Exception as e:
         log(f"Error applying desktop wallpaper: {e}")
+        return False
+
+def sync_desktop_wallpaper_now(video_path: str) -> bool:
+    """
+    Synchronously updates the Windows desktop background to the high-res frame of video_path.
+    If the video frame is cached in LOCKSCREEN_FRAMES_DIR, completes in ~2ms.
+    Guarantees seamless transitions and persistent background for the UAC secure desktop.
+    """
+    if sys.platform != "win32":
+        return False
+
+    if not os.path.exists(video_path):
+        return False
+
+    try:
+        from src.utils.lockscreen import get_cached_frame_path, extract_highres_frame
+        cached_frame = get_cached_frame_path(video_path)
+
+        if not os.path.exists(cached_frame) or os.path.getsize(cached_frame) == 0:
+            os.makedirs(os.path.dirname(cached_frame), exist_ok=True)
+            if not extract_highres_frame(video_path, cached_frame):
+                return False
+
+        success = apply_desktop_wallpaper(cached_frame)
+        if success:
+            log(f"Desktop wallpaper primed with frame: {os.path.basename(video_path)}")
+        return success
+    except Exception as e:
+        log(f"Error syncing desktop wallpaper: {e}")
         return False
 
 def disable_solid_background() -> bool:
@@ -176,9 +219,10 @@ def disable_solid_background() -> bool:
             except Exception as e:
                 log(f"Warning clearing lockscreen on disable: {e}")
 
+        config["desktop_background_mode"] = "disabled"
         config["solid_background_color"] = "disabled"
         save_config(config)
-        log("Solid background color disabled; restored Windows default background.")
+        log("Desktop background reset to Windows default.")
         return True
     except Exception as e:
         log(f"Error disabling solid background: {e}")
@@ -207,6 +251,7 @@ def apply_solid_background(hex_color: str) -> bool:
             except Exception as e:
                 log(f"Warning updating lockscreen with solid color: {e}")
 
+        config["desktop_background_mode"] = "solid_color"
         config["solid_background_color"] = hex_color.lower()
         save_config(config)
         return color_ok
@@ -251,4 +296,28 @@ def ensure_solid_background_configured() -> bool:
 
     # Mismatch or not yet configured - apply fully
     return apply_solid_background(configured_hex)
+
+def ensure_desktop_background_configured() -> bool:
+    """
+    Ensures that the Windows native desktop background reflects the configured mode
+    (sync_wallpaper, solid_color, or disabled) upon startup/boot.
+    """
+    if sys.platform != "win32":
+        return False
+
+    mode = config.get("desktop_background_mode", "sync_wallpaper")
+    if mode == "disabled":
+        return True
+
+    if mode == "solid_color":
+        return ensure_solid_background_configured()
+
+    if mode == "sync_wallpaper":
+        last_played = config.get("last_played_wallpaper")
+        if last_played:
+            from src.config import WALLPAPER_DIR
+            wp_path = os.path.join(WALLPAPER_DIR, last_played)
+            if os.path.exists(wp_path):
+                return sync_desktop_wallpaper_now(wp_path)
+    return True
 
