@@ -65,13 +65,10 @@ def skip_next():
     state.skip_event.set()
 
 def play_previous():
-    """Triggers the engine to play the previous wallpaper in history."""
-    if state.history:
-        log("Navigating to previous wallpaper")
-        state.play_previous_event.set()
-        state.skip_event.set()
-    else:
-        log("No wallpaper history to go back to")
+    """Triggers the engine to play the previous wallpaper (history or sequential reverse)."""
+    log("Navigating to previous wallpaper")
+    state.play_previous_event.set()
+    state.skip_event.set()
 
 def set_target_monitor(mon: str | int):
     """Updates the target monitor setting and notifies the engine."""
@@ -316,6 +313,7 @@ def build_menu():
 
     pause_label = "▶  Retomar Troca" if state.is_paused else "⏸  Pausar Troca"
     has_history = len(state.history) > 0
+    can_go_back = has_history or config.get("rotation_order", "shuffle") == "sequential"
 
     return pystray.Menu(
         pystray.MenuItem("📋  Gerenciar Playlist", open_manager, default=True),
@@ -343,7 +341,7 @@ def build_menu():
         ),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(pause_label, toggle_pause),
-        pystray.MenuItem("⏮  Voltar Anterior (Win+Alt+PgUp)", play_previous, enabled=has_history),
+        pystray.MenuItem("⏮  Voltar Anterior (Win+Alt+PgUp)", play_previous, enabled=can_go_back),
         pystray.MenuItem("⏭  Próximo Agora (Win+Alt+PgDn)", skip_next),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Sair", quit_app),

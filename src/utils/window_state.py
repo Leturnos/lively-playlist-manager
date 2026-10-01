@@ -1,5 +1,6 @@
 import ctypes
 from ctypes import wintypes
+import time
 
 class RECT(ctypes.Structure):
     _fields_ = [
@@ -58,6 +59,17 @@ WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 MONITORENUMPROC = ctypes.WINFUNCTYPE(
     wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC, ctypes.POINTER(RECT), wintypes.LPARAM
 )
+
+# Win32 desktop prototypes to ensure 64-bit safety without reallocation
+_user32 = ctypes.windll.user32
+_user32.OpenInputDesktop.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+_user32.OpenInputDesktop.restype = wintypes.HANDLE
+_user32.GetUserObjectInformationW.argtypes = [
+    wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)
+]
+_user32.GetUserObjectInformationW.restype = wintypes.BOOL
+_user32.CloseDesktop.argtypes = [wintypes.HANDLE]
+_user32.CloseDesktop.restype = wintypes.BOOL
 
 def get_monitor_count() -> int:
     """Returns the total count of active display monitors on the system."""
@@ -268,18 +280,99 @@ def get_system_monitors() -> list[dict]:
         m["index"] = idx
     return monitors
 
-def is_system_locked() -> bool:
+_last_logon_check_time: float = 0.0
+_cached_logon_active: bool = False
+
+def is_logon_ui_active(ttl: float = 1.0) -> bool:
     """
-    Checks if Windows is locked (Win+L) or at a secure desktop (UAC).
-    OpenInputDesktop returns 0 (Access Denied) when locked.
+    Checks if LogonUI.exe is currently running on the system.
+    LogonUI.exe is exclusively active when the Windows lock screen,
+    welcome screen, or credential prompt is displayed.
+    Results are cached with a short TTL (e.g. 1.0s) to keep CPU overhead near zero.
+    """
+    global _last_logon_check_time, _cached_logon_active
+    now = time.monotonic()
+    if (now - _last_logon_check_time) < ttl:
+        return _cached_logon_active
+
+    _last_logon_check_time = now
+    try:
+        import psutil
+        for proc in psutil.process_iter(['name']):
+            try:
+                name = proc.info.get('name')
+                if name and name.lower() == 'logonui.exe':
+                    _cached_logon_active = True
+                    return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        _cached_logon_active = False
+        return False
+    except Exception:
+        return False
+
+def is_shell_user_not_present() -> bool:
+    """
+    Checks if the shell user notification state is QUNS_NOT_PRESENT (1).
+    Microsoft documentation for QUNS_NOT_PRESENT:
+    'A screen saver is displayed, the workstation is locked, or a user session
+    is not mapped to a physical console.'
     """
     try:
-        hdesk = ctypes.windll.user32.OpenInputDesktop(0, False, 0x0100)
-        if not hdesk:
-            return True
-        ctypes.windll.user32.CloseDesktop(hdesk)
+        state = wintypes.DWORD()
+        if ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(state)) == 0:
+            # QUNS_NOT_PRESENT = 1
+            if state.value == 1:
+                return True
     except Exception:
         pass
+    return False
+
+def is_system_locked() -> bool:
+    """
+    Checks if Windows is locked (Win+L), at a logon/lock screen (ARSO boot),
+    or at a secure desktop (UAC/LogonUI).
+
+    Detection layers:
+    1. Shell notification state: SHQueryUserNotificationState returns QUNS_NOT_PRESENT (1)
+       when workstation is locked, screensaver is running, or session is unmapped.
+    2. Process detection: LogonUI.exe runs exclusively when the lock or logon screen is active.
+    3. Input desktop: OpenInputDesktop fails (NULL) or desktop name != 'default' (e.g. 'winlogon').
+    """
+    # Layer 1: Shell Notification State (QUNS_NOT_PRESENT = 1)
+    if is_shell_user_not_present():
+        return True
+
+    # Layer 2: LogonUI.exe process active (cached with 1.0s TTL)
+    if is_logon_ui_active():
+        return True
+
+    # Layer 3: Direct Win32 Desktop Inspection
+    try:
+        user32 = ctypes.windll.user32
+        # 0x0001 = DESKTOP_READOBJECTS
+        hdesk = user32.OpenInputDesktop(0, False, 0x0001)
+        if not hdesk:
+            return True
+        try:
+            UOI_NAME = 2
+            buf = ctypes.create_unicode_buffer(256)
+            needed = wintypes.DWORD()
+            if user32.GetUserObjectInformationW(
+                hdesk, UOI_NAME, buf, ctypes.sizeof(buf), ctypes.byref(needed)
+            ):
+                name = buf.value.lower().strip()
+                if name != "default":
+                    return True
+            else:
+                # If we cannot read the object name of the input desktop,
+                # the desktop is transitioning or restricted (e.g. Win+L transition)
+                return True
+        finally:
+            user32.CloseDesktop(hdesk)
+    except Exception:
+        pass
+
     return False
 
 def is_user_gaming_or_focused() -> bool:

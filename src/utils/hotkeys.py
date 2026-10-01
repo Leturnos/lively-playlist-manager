@@ -25,13 +25,10 @@ WM_HOTKEY = 0x0312
 WM_QUIT = 0x0012
 
 def trigger_previous():
-    """Triggers the engine to play the previous wallpaper in history."""
-    if state.history:
-        log("Hotkey pressed: Previous Wallpaper (Win+Alt+PgUp)")
-        state.play_previous_event.set()
-        state.skip_event.set()
-    else:
-        log("Hotkey pressed: Win+Alt+PgUp (no previous wallpaper in history)")
+    """Triggers the engine to play the previous wallpaper in history or sequential order."""
+    log("Hotkey pressed: Previous Wallpaper (Win+Alt+PgUp)")
+    state.play_previous_event.set()
+    state.skip_event.set()
 
 def trigger_next():
     """Triggers the engine to skip to the next wallpaper."""

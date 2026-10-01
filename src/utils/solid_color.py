@@ -111,8 +111,14 @@ def generate_solid_image(hex_color: str, output_path: str = SOLID_BACKGROUND_PAT
         raise
     return abs_output
 
-def apply_desktop_wallpaper(image_path: str) -> bool:
-    """Applies an image as the native Windows desktop wallpaper via SystemParametersInfoW."""
+def apply_desktop_wallpaper(image_path: str, broadcast: bool = False) -> bool:
+    """Applies an image as the native Windows desktop wallpaper via SystemParametersInfoW.
+    
+    When broadcast is False (default for video synchronization), uses SPIF_UPDATEINIFILE (0x01)
+    to update the user profile and registry silently without broadcasting WM_SETTINGCHANGE.
+    This prevents Explorer desktop refreshes from triggering iTop Easy Desktop fence re-indexing
+    and selecting all icons.
+    """
     if sys.platform != "win32":
         return False
 
@@ -137,8 +143,9 @@ def apply_desktop_wallpaper(image_path: str) -> bool:
             pass
 
         # SPI_SETDESKWALLPAPER = 20
-        # SPIF_UPDATEINIFILE (0x01) | SPIF_SENDCHANGE (0x02) = 3
-        result = ctypes.windll.user32.SystemParametersInfoW(20, 0, abs_path, 3)
+        # SPIF_UPDATEINIFILE = 0x01, SPIF_SENDCHANGE = 0x02
+        flags = (0x01 | 0x02) if broadcast else 0x01
+        result = ctypes.windll.user32.SystemParametersInfoW(20, 0, abs_path, flags)
         if result:
             log(f"Desktop wallpaper updated: {abs_path}")
             return True
@@ -196,7 +203,7 @@ def disable_solid_background() -> bool:
         applied = False
         for wp_path in default_wp_candidates:
             if os.path.exists(wp_path):
-                apply_desktop_wallpaper(wp_path)
+                apply_desktop_wallpaper(wp_path, broadcast=True)
                 applied = True
                 break
 
@@ -313,10 +320,20 @@ def ensure_desktop_background_configured() -> bool:
         return ensure_solid_background_configured()
 
     if mode == "sync_wallpaper":
-        last_played = config.get("last_played_wallpaper")
-        if last_played:
+        wp_name = None
+        if config.get("sync_lockscreen", False):
+            try:
+                from src.utils.lockscreen import get_current_lockscreen_wallpaper
+                wp_name = get_current_lockscreen_wallpaper()
+            except Exception:
+                pass
+
+        if not wp_name:
+            wp_name = config.get("last_played_wallpaper")
+
+        if wp_name:
             from src.config import WALLPAPER_DIR
-            wp_path = os.path.join(WALLPAPER_DIR, last_played)
+            wp_path = os.path.join(WALLPAPER_DIR, wp_name)
             if os.path.exists(wp_path):
                 return sync_desktop_wallpaper_now(wp_path)
     return True

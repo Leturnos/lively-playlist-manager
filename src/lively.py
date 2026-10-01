@@ -189,7 +189,7 @@ def set_lively_playback(play: bool) -> bool:
         log(f"ERROR toggling Lively playback: {e}")
         return False
 
-def set_wallpaper(video_path: str, monitor: int | str | None = None) -> bool:
+def set_wallpaper(video_path: str, monitor: int | str | None = None, update_history: bool = True) -> bool:
     """Sends a command to Lively.exe to change the current wallpaper, optionally targeting a specific monitor."""
     lively_exe = config.get("lively_path")
     
@@ -255,17 +255,22 @@ def set_wallpaper(video_path: str, monitor: int | str | None = None) -> bool:
             return False
             
         # Update history stack
-        if state.current_video:
-            current_path = os.path.join(os.path.dirname(video_path), state.current_video)
-            if state.is_going_back:
+        new_video_name = os.path.basename(video_path)
+        if update_history and state.current_video:
+            # Only record in history if the video actually changed (prevents drift re-apply pollution)
+            if new_video_name.lower() != state.current_video.lower():
+                current_path = os.path.join(os.path.dirname(video_path), state.current_video)
+                if state.is_going_back:
+                    state.is_going_back = False
+                else:
+                    if not state.history or state.history[-1] != current_path:
+                        state.history.append(current_path)
+                        if len(state.history) > 50:
+                            state.history.pop(0)
+            elif state.is_going_back:
                 state.is_going_back = False
-            else:
-                if not state.history or state.history[-1] != current_path:
-                    state.history.append(current_path)
-                    if len(state.history) > 50:
-                        state.history.pop(0)
             
-        state.current_video = os.path.basename(video_path)
+        state.current_video = new_video_name
         mon_str = f" (Monitor {effective_mon})" if effective_mon is not None else " (Auto/All Monitors)"
         log(f"Wallpaper changed: {state.current_video}{mon_str}")
         return True

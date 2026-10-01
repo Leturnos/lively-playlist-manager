@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import uuid
 import json
 import shutil
@@ -8,8 +9,6 @@ import winreg
 from PIL import Image
 from moviepy import VideoFileClip
 from src.config import (
-    LOCKSCREEN_PATH_A,
-    LOCKSCREEN_PATH_B,
     STATIC_WALLPAPER_DIR,
     SOLID_BACKGROUND_PATH,
     LOCKSCREEN_FRAMES_DIR,
@@ -28,19 +27,33 @@ _sync_lock = threading.Lock()
 
 def get_next_lockscreen_path() -> str:
     """
-    Alternates between two distinct file paths (A/B ping-pong) to bust
-    Windows lock screen caching. When the path string in the registry changes,
-    Windows immediately refreshes and re-renders the new image.
+    Generates a unique timestamped file path for the lock screen image
+    to completely bust Windows Lock Screen caching (SystemData ReadOnly cache).
+    Windows keys its internal lock screen cache by file path; generating an
+    inédito path string forces Windows 10/11/24H2/25H2 to immediately re-ingest
+    and render the new frame.
     """
-    if sys.platform == "win32":
-        try:
-            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, CSP_REG_KEY, 0, REG_ACCESS_READ) as key:
-                current_reg_val, _ = winreg.QueryValueEx(key, "LockScreenImagePath")
-                if os.path.abspath(current_reg_val).lower() == os.path.abspath(LOCKSCREEN_PATH_A).lower():
-                    return LOCKSCREEN_PATH_B
-        except Exception:
-            pass
-    return LOCKSCREEN_PATH_A
+    ts = time.time_ns()
+    return os.path.join(STATIC_WALLPAPER_DIR, f"current_lockscreen_{ts}.jpg")
+
+def cleanup_old_lockscreen_images(keep_path: str | None = None):
+    """
+    Removes previous lockscreen image files from STATIC_WALLPAPER_DIR,
+    keeping only the currently active lock screen image (keep_path).
+    Safely ignores files currently locked by Windows LogonUI or Explorer.
+    """
+    try:
+        keep_abs = os.path.abspath(keep_path).lower() if keep_path else None
+        for fname in os.listdir(STATIC_WALLPAPER_DIR):
+            if fname.lower().startswith("current_lockscreen_") and fname.lower().endswith(".jpg"):
+                full_path = os.path.join(STATIC_WALLPAPER_DIR, fname)
+                if keep_abs is None or os.path.abspath(full_path).lower() != keep_abs:
+                    try:
+                        os.remove(full_path)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
 
 def get_cached_frame_path(video_path: str) -> str:
     """Returns the persistent high-resolution frame cache path for a video."""
@@ -259,6 +272,11 @@ def save_lockscreen_state(video_filename: str, image_path: str):
     slot_name = os.path.basename(image_path).lower()
     slots[slot_name] = video_filename
 
+    # Prune slots dictionary to keep only recent entries (max 20)
+    if len(slots) > 20:
+        recent_keys = list(slots.keys())[-20:]
+        slots = {k: slots[k] for k in recent_keys}
+
     payload = {
         "wallpaper_filename": video_filename,
         "image_path": os.path.abspath(image_path),
@@ -337,6 +355,7 @@ def sync_lockscreen_now(video_path: str) -> bool:
             success, msg = set_lockscreen_registry(target_path)
             if success:
                 save_lockscreen_state(os.path.basename(video_path), target_path)
+                cleanup_old_lockscreen_images(target_path)
                 log(f"Lockscreen synced with: {os.path.basename(video_path)} -> {os.path.basename(target_path)}")
                 return True
             else:

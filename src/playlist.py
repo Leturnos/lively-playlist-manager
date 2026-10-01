@@ -6,7 +6,7 @@ from moviepy import VideoFileClip
 from src.config import config, WALLPAPER_DIR, load_config, save_config
 from src.utils.logger import log
 from src.utils.window_state import should_pause_for_lively, is_system_locked
-from src.lively import set_wallpaper, get_lively_current_wallpaper
+from src.lively import set_wallpaper, get_lively_current_wallpaper, is_lively_running
 from src.utils.lockscreen import (
     sync_lockscreen_worker,
     sync_lockscreen_now,
@@ -70,6 +70,38 @@ def get_playlist() -> list[str]:
     selected = [f for f in all_files if not active_list or f in active_list]
     
     return [os.path.join(WALLPAPER_DIR, f) for f in (selected or all_files)]
+
+def step_previous_video(active_pool: list[str], pool_index: int, order: str) -> tuple[int, str | None]:
+    """
+    Determines the previous video to play when the user clicks 'Voltar Anterior'.
+    Preserves forward navigation history for bidirectional stepping.
+    Returns (new_pool_index, target_video_path) or (pool_index, None) if no previous video available.
+    """
+    if state.history:
+        if state.current_video:
+            curr_full = os.path.join(WALLPAPER_DIR, state.current_video)
+            if not state.forward_history or state.forward_history[-1] != curr_full:
+                state.forward_history.append(curr_full)
+                if len(state.forward_history) > 50:
+                    state.forward_history.pop(0)
+        state.is_going_back = True
+        video_path = state.history.pop()
+        for idx, p in enumerate(active_pool):
+            if os.path.basename(p).lower() == os.path.basename(video_path).lower():
+                pool_index = idx
+                break
+        return pool_index, video_path
+    elif order == "sequential" and active_pool:
+        if state.current_video:
+            curr_full = os.path.join(WALLPAPER_DIR, state.current_video)
+            if not state.forward_history or state.forward_history[-1] != curr_full:
+                state.forward_history.append(curr_full)
+                if len(state.forward_history) > 50:
+                    state.forward_history.pop(0)
+        state.is_going_back = True
+        new_index = (pool_index - 1) % len(active_pool)
+        return new_index, active_pool[new_index]
+    return pool_index, None
 
 def run_rotation_engine():
     """Main loop that manages the wallpaper rotation based on the chosen mode."""
@@ -173,19 +205,10 @@ def run_rotation_engine():
                 if state.play_previous_event.is_set():
                     state.play_previous_event.clear()
                     state.skip_event.clear()
-                    if state.history:
-                        if state.current_video:
-                            curr_full = os.path.join(WALLPAPER_DIR, state.current_video)
-                            if not state.forward_history or state.forward_history[-1] != curr_full:
-                                state.forward_history.append(curr_full)
-                                if len(state.forward_history) > 50:
-                                    state.forward_history.pop(0)
-                        state.is_going_back = True
-                        video_path = state.history.pop()
-                        for idx, p in enumerate(active_pool):
-                            if os.path.basename(p).lower() == os.path.basename(video_path).lower():
-                                pool_index = idx
-                                break
+                    new_idx, target_path = step_previous_video(active_pool, pool_index, order)
+                    if target_path:
+                        pool_index = new_idx
+                        video_path = target_path
                     else:
                         continue
 
@@ -282,6 +305,7 @@ def run_rotation_engine():
                 active_time = 0.0
                 state.current_active_time = 0.0
                 last_tick = time.monotonic()
+                last_lively_check = last_tick
                 last_loop_log = 0
                 is_currently_paused = False
                 was_system_locked = False
@@ -308,6 +332,7 @@ def run_rotation_engine():
                                     log(f"Unlock reconciliation: Lock screen '{lock_wp}' != Desktop '{desktop_wp}'. Aligning desktop.")
                                     wp_path = os.path.join(WALLPAPER_DIR, lock_wp)
                                     if os.path.exists(wp_path):
+                                        video_path = wp_path
                                         set_wallpaper(wp_path)
                                         if config.get("desktop_background_mode", "sync_wallpaper") == "sync_wallpaper":
                                             try:
@@ -345,7 +370,7 @@ def run_rotation_engine():
                     delta = min(now - last_tick, 1.0)
                     last_tick = now
 
-                    paused = state.is_paused or should_pause_for_lively()
+                    paused = state.is_paused or locked or should_pause_for_lively()
                     if paused:
                         if not is_currently_paused:
                             is_currently_paused = True
@@ -353,7 +378,26 @@ def run_rotation_engine():
                         continue
                     elif is_currently_paused:
                         is_currently_paused = False
+                        last_tick = time.monotonic()
+                        last_lively_check = last_tick
                         log(f"Rotation resumed: {os.path.basename(video_path)} from {active_time:.1f}s / {effective_limit:.1f}s")
+
+                    # Periodic check (every 5 seconds) to ensure Lively did not lose wallpaper
+                    # or restart due to Explorer / iTop Easy Desktop desktop refresh
+                    if now - last_lively_check >= 5.0:
+                        last_lively_check = now
+                        if state.current_video:
+                            desktop_wp = get_lively_current_wallpaper()
+                            if desktop_wp and desktop_wp.lower() != state.current_video.lower():
+                                if is_lively_running():
+                                    log(f"Desktop drift detected (Explorer/iTop refresh?): Lively is playing '{desktop_wp}', expected '{state.current_video}'. Re-applying.")
+                                    set_wallpaper(video_path, update_history=False)
+                                    if config.get("desktop_background_mode", "sync_wallpaper") == "sync_wallpaper":
+                                        try:
+                                            from src.utils.solid_color import sync_desktop_wallpaper_now
+                                            sync_desktop_wallpaper_now(video_path)
+                                        except Exception:
+                                            pass
 
                     active_time += delta
                     state.current_active_time = active_time
