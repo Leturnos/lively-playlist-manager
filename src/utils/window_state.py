@@ -31,29 +31,29 @@ class SYSTEM_POWER_STATUS(ctypes.Structure):
 MONITOR_DEFAULTTONEAREST = 2
 SM_CMONITORS = 80
 DWMWA_CLOAKED = 14
-IGNORED_CLASSES = frozenset({
-    # Desktop
+# True desktop surfaces (where the wallpaper is directly visible)
+DESKTOP_CLASSES = frozenset({
     "WorkerW",
     "Progman",
-    # Start menu, taskview (Win10), action center, search flyouts
-    "Windows.UI.Core.CoreWindow",
-    # Taskview (Win11), Start menu (Win11), XAML island hosts
-    "XamlExplorerHostIslandWindow",
-    # Alt+tab screen (Win10)
-    "MultitaskingViewFrame",
-    # Widget window (Win11)
-    "WindowsDashboard",
-    # Taskbars
-    "Shell_TrayWnd",
-    "Shell_SecondaryTrayWnd",
-    # Systray notifyicon expanded popup / flyouts
-    "NotifyIconOverflowWindow",
-    "TopLevelWindowForOverflowXamlIsland",
-    # Third-party desktop widgets / legacy tools
     "RainmeterMeterWindow",
     "_cls_desk_",
     "TMainBox",
 })
+
+# Windows shell UI overlays (taskbars, start menu, tray flyouts, task view)
+# These sit on top of applications — interacting with them does not mean the user returned to an empty desktop.
+SHELL_OVERLAY_CLASSES = frozenset({
+    "Shell_TrayWnd",
+    "Shell_SecondaryTrayWnd",
+    "Windows.UI.Core.CoreWindow",
+    "XamlExplorerHostIslandWindow",
+    "TopLevelWindowForOverflowXamlIsland",
+    "NotifyIconOverflowWindow",
+    "MultitaskingViewFrame",
+    "WindowsDashboard",
+})
+
+IGNORED_CLASSES = DESKTOP_CLASSES | SHELL_OVERLAY_CLASSES
 
 WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 MONITORENUMPROC = ctypes.WINFUNCTYPE(
@@ -70,6 +70,8 @@ _user32.GetUserObjectInformationW.argtypes = [
 _user32.GetUserObjectInformationW.restype = wintypes.BOOL
 _user32.CloseDesktop.argtypes = [wintypes.HANDLE]
 _user32.CloseDesktop.restype = wintypes.BOOL
+_user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
+_user32.GetWindowRect.restype = wintypes.BOOL
 
 def get_monitor_count() -> int:
     """Returns the total count of active display monitors on the system."""
@@ -375,6 +377,51 @@ def is_system_locked() -> bool:
 
     return False
 
+def get_raised_taskbar_rect(monitor_rect: tuple[int, int, int, int]) -> tuple[int, int, int, int] | None:
+    """
+    Returns the screen rect of a visible, raised taskbar (Shell_TrayWnd or Shell_SecondaryTrayWnd)
+    intersecting the specified monitor bounds, or None if hidden/collapsed (auto-hide retracted).
+    """
+    try:
+        user32 = ctypes.windll.user32
+        m_left, m_top, m_right, m_bottom = monitor_rect
+
+        candidate_hwnds = []
+        h_primary = user32.FindWindowW("Shell_TrayWnd", None)
+        if h_primary:
+            candidate_hwnds.append(h_primary)
+
+        h_sec = None
+        while True:
+            h_sec = user32.FindWindowExW(None, h_sec, "Shell_SecondaryTrayWnd", None)
+            if not h_sec:
+                break
+            candidate_hwnds.append(h_sec)
+
+        for hwnd in candidate_hwnds:
+            if not user32.IsWindowVisible(hwnd):
+                continue
+            rect = RECT()
+            if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                continue
+
+            t_left, t_top, t_right, t_bottom = rect.left, rect.top, rect.right, rect.bottom
+            inter_left = max(m_left, t_left)
+            inter_top = max(m_top, t_top)
+            inter_right = min(m_right, t_right)
+            inter_bottom = min(m_bottom, t_bottom)
+
+            if inter_right > inter_left and inter_bottom > inter_top:
+                overlap_w = inter_right - inter_left
+                overlap_h = inter_bottom - inter_top
+                # Auto-hide taskbars when retracted peek <= 4px on screen.
+                # When raised, standard taskbars are >= 28px.
+                if overlap_w > 15 and overlap_h > 15:
+                    return (inter_left, inter_top, inter_right, inter_bottom)
+    except Exception:
+        pass
+    return None
+
 def is_user_gaming_or_focused() -> bool:
     """
     Fallback check: checks if foreground window is fullscreen on any monitor
@@ -391,8 +438,10 @@ def is_user_gaming_or_focused() -> bool:
         class_name = ctypes.create_string_buffer(256)
         ctypes.windll.user32.GetClassNameA(hwnd, class_name, 256)
         name = class_name.value.decode("utf-8", errors="ignore")
-        if name in IGNORED_CLASSES:
+        if name in DESKTOP_CLASSES:
             return False
+        if name in SHELL_OVERLAY_CLASSES:
+            return any(bool(get_visible_windows(target_monitor_rect=m["rect"])) for m in get_system_monitors())
 
         rect = RECT()
         if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
@@ -486,15 +535,31 @@ def should_pause_for_lively() -> bool:
         # Resolve foreground window once — shared by both focus and coverage checks
         hwnd = ctypes.windll.user32.GetForegroundWindow()
         fg_is_desktop = True
+        fg_is_shell_overlay = False
         fg_on_target = False
         fg_hmon = None
         if hwnd:
             class_name = ctypes.create_string_buffer(256)
             ctypes.windll.user32.GetClassNameA(hwnd, class_name, 256)
             fg_class = class_name.value.decode("utf-8", errors="ignore")
-            fg_is_desktop = (fg_class in IGNORED_CLASSES)
+            fg_is_desktop = (fg_class in DESKTOP_CLASSES)
+            fg_is_shell_overlay = (fg_class in SHELL_OVERLAY_CLASSES)
             fg_hmon = ctypes.windll.user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
             fg_on_target = any(m["hmonitor"] == fg_hmon for m in eval_monitors)
+
+        # If a shell overlay (taskbar, start menu, tray flyouts) has focus:
+        # Check whether an application is open underneath on the target display.
+        # Interacting with the taskbar over an open application must NOT unpause rotation.
+        if fg_is_shell_overlay:
+            has_visible_apps = any(
+                bool(get_visible_windows(target_monitor_rect=m["rect"]))
+                for m in eval_monitors
+            )
+            if has_visible_apps:
+                fg_is_desktop = False
+                fg_on_target = True
+            else:
+                fg_is_desktop = True
 
         # Focus check: if focus pause is enabled and an application is focused on target display
         if is_focus_pause and not fg_is_desktop and fg_on_target:
@@ -505,6 +570,12 @@ def should_pause_for_lively() -> bool:
         # Algorithm 0: Foreground Process
         if algorithm == 0:
             if fg_is_desktop or not fg_on_target:
+                return False
+            if fg_is_shell_overlay:
+                for m in eval_monitors:
+                    win_entries = get_visible_windows(target_monitor_rect=m["rect"], include_hwnds=True)
+                    if any(ctypes.windll.user32.IsZoomed(h) for _, h in win_entries):
+                        return True
                 return False
             if ctypes.windll.user32.IsZoomed(hwnd):
                 return True
@@ -521,6 +592,9 @@ def should_pause_for_lively() -> bool:
         elif algorithm == 1:
             for m in eval_monitors:
                 win_rects = get_visible_windows(target_monitor_rect=m["rect"])
+                taskbar_rect = get_raised_taskbar_rect(m["rect"])
+                if taskbar_rect:
+                    win_rects.append(taskbar_rect)
                 for r in win_rects:
                     if is_rect_covering(r, m["work"], 0.95):
                         return True
@@ -546,6 +620,10 @@ def should_pause_for_lively() -> bool:
                 win_entries = get_visible_windows(target_monitor_rect=m["rect"], include_hwnds=True)
                 win_rects = [r for r, _ in win_entries]
                 win_hwnds = [h for _, h in win_entries]
+                # If an auto-hide taskbar is raised on screen, include it in the covered area
+                taskbar_rect = get_raised_taskbar_rect(m["rect"])
+                if taskbar_rect:
+                    win_rects.append(taskbar_rect)
                 if is_grid_covered(m["work"], win_rects, tile_size=tile_size,
                                    coverage_threshold=coverage_threshold, hwnds=win_hwnds):
                     return True
