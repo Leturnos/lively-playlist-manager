@@ -14,6 +14,11 @@ from src.config import (
     LOCKSCREEN_FRAMES_DIR,
     LOCKSCREEN_STATE_FILE,
     WALLPAPER_DIR,
+    PUBLIC_LOCKSCREEN_DIR,
+    PUBLIC_LOCKSCREEN_SLOT_A,
+    PUBLIC_LOCKSCREEN_SLOT_B,
+    LOCKSCREEN_PATH_A,
+    LOCKSCREEN_PATH_B,
 )
 from src.utils.logger import log
 from src import state
@@ -25,35 +30,101 @@ REG_ACCESS_READ = winreg.KEY_QUERY_VALUE | winreg.KEY_WOW64_64KEY
 
 _sync_lock = threading.Lock()
 
+_public_dir_writable: bool | None = None
+
+def reset_lockscreen_slots_cache():
+    """Resets the cached writability status of PUBLIC_LOCKSCREEN_DIR (used by tests)."""
+    global _public_dir_writable
+    _public_dir_writable = None
+
+def get_lockscreen_slots() -> tuple[str, str]:
+    r"""
+    Returns the two alternating file paths (Slot A, Slot B) for the lock screen image.
+    Prefers PUBLIC_LOCKSCREEN_DIR (C:\ProgramData\LivelyPlaylistManager\Lockscreen)
+    for zero-latency boot-time ingestion by LogonUI (under SYSTEM account).
+    Falls back to STATIC_WALLPAPER_DIR if ProgramData is unavailable or not writable.
+    Caches writability status in memory to avoid recurring disk I/O and antivirus contention.
+    """
+    global _public_dir_writable
+    if _public_dir_writable is None:
+        try:
+            os.makedirs(PUBLIC_LOCKSCREEN_DIR, exist_ok=True)
+            test_file = os.path.join(PUBLIC_LOCKSCREEN_DIR, f".write_test_{uuid.uuid4().hex[:6]}")
+            with open(test_file, "w") as f:
+                f.write("1")
+            os.remove(test_file)
+            _public_dir_writable = True
+        except Exception:
+            _public_dir_writable = False
+
+    if _public_dir_writable:
+        return PUBLIC_LOCKSCREEN_SLOT_A, PUBLIC_LOCKSCREEN_SLOT_B
+    return LOCKSCREEN_PATH_A, LOCKSCREEN_PATH_B
+
 def get_next_lockscreen_path() -> str:
     """
-    Generates a unique timestamped file path for the lock screen image
-    to completely bust Windows Lock Screen caching (SystemData ReadOnly cache).
-    Windows keys its internal lock screen cache by file path; generating an
-    inédito path string forces Windows 10/11/24H2/25H2 to immediately re-ingest
-    and render the new frame.
+    Determines the next lock screen image slot using double-buffering (Slot A <-> Slot B).
+    Double-buffering guarantees that:
+    1. The currently displayed lock screen image is never overwritten while in use.
+    2. The active image remains stationary on disk with a stable path in a system folder,
+       enabling Windows LogonUI to read it instantly on boot without cache misses or black screens.
+    3. Alternating slot paths between rotations signals Windows PersonalizationCSP to refresh
+       the display cleanly without generating unbounded files.
     """
-    ts = time.time_ns()
-    return os.path.join(STATIC_WALLPAPER_DIR, f"current_lockscreen_{ts}.jpg")
+    slot_a, slot_b = get_lockscreen_slots()
+
+    current_active = None
+    if os.path.exists(LOCKSCREEN_STATE_FILE):
+        try:
+            with open(LOCKSCREEN_STATE_FILE, "r", encoding="utf-8") as f:
+                current_active = json.load(f).get("image_path")
+        except Exception:
+            pass
+
+    if not current_active and sys.platform == "win32":
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, CSP_REG_KEY, 0, REG_ACCESS_READ) as key:
+                current_active, _ = winreg.QueryValueEx(key, "LockScreenImagePath")
+        except Exception:
+            pass
+
+    if current_active:
+        base_active = os.path.basename(current_active).lower()
+        if base_active in (os.path.basename(slot_a).lower(), "current_lockscreen_a.jpg"):
+            return slot_b
+        elif base_active in (os.path.basename(slot_b).lower(), "current_lockscreen_b.jpg"):
+            return slot_a
+
+    return slot_a
 
 def cleanup_old_lockscreen_images(keep_path: str | None = None):
     """
-    Removes previous lockscreen image files from STATIC_WALLPAPER_DIR,
-    keeping only the currently active lock screen image (keep_path).
+    Removes legacy timestamped lockscreen files from STATIC_WALLPAPER_DIR and PUBLIC_LOCKSCREEN_DIR,
+    keeping only the current active and alternate slots.
     Safely ignores files currently locked by Windows LogonUI or Explorer.
     """
-    try:
-        keep_abs = os.path.abspath(keep_path).lower() if keep_path else None
-        for fname in os.listdir(STATIC_WALLPAPER_DIR):
-            if fname.lower().startswith("current_lockscreen_") and fname.lower().endswith(".jpg"):
-                full_path = os.path.join(STATIC_WALLPAPER_DIR, fname)
-                if keep_abs is None or os.path.abspath(full_path).lower() != keep_abs:
-                    try:
-                        os.remove(full_path)
-                    except Exception:
-                        pass
-    except Exception:
-        pass
+    dirs_to_clean = [STATIC_WALLPAPER_DIR]
+    if os.path.exists(PUBLIC_LOCKSCREEN_DIR):
+        dirs_to_clean.append(PUBLIC_LOCKSCREEN_DIR)
+
+    keep_abs = os.path.abspath(keep_path).lower() if keep_path else None
+
+    for d in dirs_to_clean:
+        try:
+            for fname in os.listdir(d):
+                fl = fname.lower()
+                # Clean up legacy timestamped files (e.g. current_lockscreen_1791386050901031600.jpg)
+                if fl.startswith("current_lockscreen_") and fl.endswith(".jpg"):
+                    middle = fl.replace("current_lockscreen_", "").replace(".jpg", "")
+                    if middle.isdigit():
+                        full_path = os.path.join(d, fname)
+                        if keep_abs is None or os.path.abspath(full_path).lower() != keep_abs:
+                            try:
+                                os.remove(full_path)
+                            except Exception:
+                                pass
+        except Exception:
+            pass
 
 def get_cached_frame_path(video_path: str) -> str:
     """Returns the persistent high-resolution frame cache path for a video."""
@@ -75,13 +146,21 @@ def extract_highres_frame(video_path: str, output_path: str) -> bool:
 
     cached_frame = get_cached_frame_path(video_path)
 
-    # Fast path: copy directly from frame cache (< 5ms)
+    # Fast path: copy directly from frame cache (< 5ms) using atomic swap
     if os.path.exists(cached_frame) and os.path.getsize(cached_frame) > 0:
+        unique_suffix = uuid.uuid4().hex[:6]
+        tmp_fast = f"{output_path}.{unique_suffix}.tmp"
         try:
-            shutil.copyfile(cached_frame, output_path)
+            shutil.copyfile(cached_frame, tmp_fast)
+            os.replace(tmp_fast, output_path)
             return True
         except Exception as e:
             log(f"Lockscreen: Warning copying from frame cache: {e}")
+            if os.path.exists(tmp_fast):
+                try:
+                    os.remove(tmp_fast)
+                except Exception:
+                    pass
 
     # Slow path: extract frame via MoviePy and store in cache
     unique_suffix = uuid.uuid4().hex[:6]
@@ -98,7 +177,16 @@ def extract_highres_frame(video_path: str, output_path: str) -> bool:
         if img.mode in ("RGBA", "LA", "P"):
             img = img.convert("RGB")
             
-        img.save(tmp_path, "JPEG", quality=95)
+        # Downscale if video resolution exceeds screen dimensions to optimize boot memory & decoding
+        try:
+            from src.utils.solid_color import get_screen_resolution
+            screen_w, screen_h = get_screen_resolution()
+            if img.width > screen_w or img.height > screen_h:
+                img.thumbnail((screen_w, screen_h), Image.Resampling.LANCZOS)
+        except Exception:
+            pass
+
+        img.save(tmp_path, "JPEG", quality=90, progressive=False)
         
         # Atomic replacement to avoid corrupt locks during OS read
         if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0:
@@ -145,7 +233,10 @@ def check_lockscreen_permissions() -> bool:
 
 def set_lockscreen_registry(image_path: str) -> tuple[bool, str]:
     """
-    Applies the image to Windows Lock Screen via PersonalizationCSP and Group Policy registry keys.
+    Applies the image to Windows Lock Screen via PersonalizationCSP.
+    Exclusively utilizes PersonalizationCSP on Windows 10/11 Home, Pro & Enterprise to avoid
+    Group Policy Service (gpsvc) boot timeouts that cause 10-20 second black screen delays.
+    Proactively purges legacy Group Policy LockScreenImage if present.
     Returns (success: bool, message: str). Never raises unhandled exceptions.
     """
     if sys.platform != "win32":
@@ -156,10 +247,9 @@ def set_lockscreen_registry(image_path: str) -> tuple[bool, str]:
         return False, f"Lockscreen image does not exist or is empty: {abs_path}"
 
     applied_csp = False
-    applied_policy = False
     error_msg = ""
 
-    # 1. Primary method: PersonalizationCSP (Windows 10/11 Home & Pro)
+    # 1. Primary method: PersonalizationCSP (Windows 10/11 Home, Pro & Enterprise)
     try:
         with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, CSP_REG_KEY, 0, REG_ACCESS_WRITE) as key:
             winreg.SetValueEx(key, "LockScreenImagePath", 0, winreg.REG_SZ, abs_path)
@@ -171,15 +261,18 @@ def set_lockscreen_registry(image_path: str) -> tuple[bool, str]:
     except Exception as e:
         error_msg = f"Failed to set PersonalizationCSP: {e}"
 
-    # 2. Secondary method: Policy key (Windows 10/11 Enterprise / Education fallback)
+    # 2. Proactively purge legacy Group Policy key if present to eliminate gpsvc boot delays
     try:
-        with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, POLICY_REG_KEY, 0, REG_ACCESS_WRITE) as key:
-            winreg.SetValueEx(key, "LockScreenImage", 0, winreg.REG_SZ, abs_path)
-            applied_policy = True
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, POLICY_REG_KEY, 0, REG_ACCESS_WRITE) as pol_key:
+            try:
+                winreg.DeleteValue(pol_key, "LockScreenImage")
+                log("Lockscreen: Purged legacy Group Policy LockScreenImage to ensure ultra-fast boot.")
+            except FileNotFoundError:
+                pass
     except Exception:
         pass
 
-    if applied_csp or applied_policy:
+    if applied_csp:
         return True, "Lockscreen registry updated successfully."
     else:
         return False, error_msg

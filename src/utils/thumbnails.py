@@ -38,10 +38,20 @@ def generate_thumbnail(filename: str):
         if img.mode in ("RGBA", "LA", "P"):
             img = img.convert("RGB")
 
-        # Opportunistically pre-cache full-resolution frame for lockscreen
+        # Opportunistically pre-cache frame for lockscreen (optimized for screen resolution)
         if not os.path.exists(cached_frame):
             os.makedirs(LOCKSCREEN_FRAMES_DIR, exist_ok=True)
-            img.save(cached_frame, "JPEG", quality=95)
+            try:
+                from src.utils.solid_color import get_screen_resolution
+                screen_w, screen_h = get_screen_resolution()
+                if img.width > screen_w or img.height > screen_h:
+                    save_frame = img.copy()
+                    save_frame.thumbnail((screen_w, screen_h), Image.Resampling.LANCZOS)
+                else:
+                    save_frame = img
+            except Exception:
+                save_frame = img
+            save_frame.save(cached_frame, "JPEG", quality=90, progressive=False)
 
         thumb_img = img.resize((THUMB_W, THUMB_H), Image.Resampling.LANCZOS)
         os.makedirs(THUMBS_DIR, exist_ok=True)

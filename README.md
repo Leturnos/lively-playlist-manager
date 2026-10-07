@@ -141,10 +141,15 @@ Se você usar outro app com comportamento parecido e o temporizador travar, voc�
 Permite que o mesmo wallpaper ativo em reprodução no Lively Wallpaper seja automaticamente refletido como a imagem estática de bloqueio do Windows (em alta resolução nativa).
 
 - **Ativação:** No menu da bandeja (perto do relógio), clique em **🔒 Sincronizar Tela de Bloqueio** (logo abaixo de **Monitor**). Uma marcação `✓` confirmará a ativação.
-- **Permissão única no Windows:** As políticas de tela de bloqueio do Windows exigem escrita na chave `HKLM`. Para permitir que o aplicativo atualize a imagem transparentemente em segundo plano sem pedir confirmações de Administrador a cada troca, clique com o botão direito em `setup_lockscreen_permission.bat` na raiz do projeto e selecione **Executar como Administrador** apenas uma vez.
+- **Permissão única no Windows:** As políticas de tela de bloqueio do Windows exigem escrita na chave `HKLM` e acesso à pasta do sistema. Para permitir que o aplicativo atualize a imagem transparentemente em segundo plano sem pedir confirmações de Administrador a cada troca, execute `setup_lockscreen_permission.bat` (ou `setup_lockscreen_permission.ps1`) na raiz do projeto apenas uma vez. O script auto-eleva com UAC e concede permissões restritas exclusivamente à sua conta de usuário ativo (`Modify` e `SetValue`), respeitando o princípio do menor privilégio sem conceder `FullControl`.
+- **Carregamento Ultra Rápido no Boot (Sem Tela Preta):**
+  - **Diretório Global de Sistema:** O frame ativo é posicionado em `C:\ProgramData\LivelyPlaylistManager\Lockscreen`, permitindo que o `LogonUI.exe` (executado sob a conta `SYSTEM`) leia a imagem no primeiro milissegundo de boot, sem esperar a montagem do perfil do usuário.
+  - **Double Buffering Estável:** Utiliza slots alternados (`slot_a.jpg` e `slot_b.jpg`). Como os arquivos mantêm caminhos estáveis no sistema, o Windows mantém o cache pré-renderizado pronto para o boot seguinte, eliminando os 10-20 segundos de tela preta causados por nomes dinâmicos.
+  - **Eliminação de Conflitos GPO:** Utiliza exclusivamente o moderno `PersonalizationCSP`, expurgando chaves de diretiva legada que forçavam timeouts do serviço `gpsvc`.
 - **Proteções do Sistema:**
   - **Thread em segundo plano:** A extração do frame é 100% assíncrona; a transição de vídeo no Lively ocorre instantaneamente sem qualquer engasgo.
-  - **Gravação atômica:** O frame é gravado temporariamente e movido de forma atômica para evitar leituras corrompidas pelo Windows.
+  - **Gravação atômica:** O frame é gravado temporariamente e movido de forma atômica (`os.replace`) para evitar leituras corrompidas pelo Windows.
+  - **Segurança contra Desligamentos:** Se o computador for desligado no exato instante da transição, o mecanismo de reconciliação no boot detecta o estado e alinha o Lively automaticamente com a tela de bloqueio sem riscos de corrupção.
   - **Restauração limpa:** Ao desmarcar a opção na bandeja, a tela de bloqueio retorna automaticamente à cor sólida configurada.
 
 ### 🖼 Fundo da Área de Trabalho Nativo, UAC & Suavização de Transições
@@ -198,7 +203,8 @@ O aplicativo oferece duas soluções complementares e intercambiáveis para esse
 ├── Library/              # Biblioteca interna do Lively (apontada nas configurações)
 ├── config.json           # Configuração persistente
 ├── lively_playlist.vbs   # Launcher sem janela de terminal
-├── setup_lockscreen_permission.bat # Script de permissão única (UAC)
+├── setup_lockscreen_permission.bat # Lançador rápido (UAC)
+├── setup_lockscreen_permission.ps1 # Script de permissão com menor privilégio
 └── pyproject.toml
 ```
 

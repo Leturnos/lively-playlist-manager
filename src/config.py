@@ -10,11 +10,16 @@ THUMBS_DIR = os.path.join(ROOT_DIR, "thumbs")
 STATIC_WALLPAPER_DIR = os.path.join(ROOT_DIR, "Static Wallpaper")
 LOCKSCREEN_PATH_A = os.path.join(STATIC_WALLPAPER_DIR, "current_lockscreen_a.jpg")
 LOCKSCREEN_PATH_B = os.path.join(STATIC_WALLPAPER_DIR, "current_lockscreen_b.jpg")
-CURRENT_LOCKSCREEN_PATH = LOCKSCREEN_PATH_A
 LOCKSCREEN_FRAMES_DIR = os.path.join(STATIC_WALLPAPER_DIR, "frames")
 LOCKSCREEN_STATE_FILE = os.path.join(STATIC_WALLPAPER_DIR, "lockscreen_state.json")
 SOLID_BACKGROUND_PATH = os.path.join(STATIC_WALLPAPER_DIR, "solid_background.png")
 CONFIG_FILE = os.path.join(ROOT_DIR, "config.json")
+
+# System-wide public lockscreen directory for zero-delay boot loading
+PROGRAM_DATA_DIR = os.path.join(os.environ.get("ProgramData", "C:\\ProgramData"), "LivelyPlaylistManager")
+PUBLIC_LOCKSCREEN_DIR = os.path.join(PROGRAM_DATA_DIR, "Lockscreen")
+PUBLIC_LOCKSCREEN_SLOT_A = os.path.join(PUBLIC_LOCKSCREEN_DIR, "slot_a.jpg")
+PUBLIC_LOCKSCREEN_SLOT_B = os.path.join(PUBLIC_LOCKSCREEN_DIR, "slot_b.jpg")
 
 SOLID_COLOR_PRESETS = [
     ("Preto Puro", "#000000"),
