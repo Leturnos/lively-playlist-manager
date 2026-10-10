@@ -8,6 +8,7 @@ import time
 from src.config import config, LIVELY_LIBRARY, LIVELY_WPTMP
 from src.utils.logger import log
 from src import state
+from src.ui import tray
 
 LIVELY_APP_DATA = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Lively Wallpaper")
 LIVELY_SETTINGS_PATH = os.path.join(LIVELY_APP_DATA, "Settings.json")
@@ -61,18 +62,38 @@ def get_lively_pause_rules(force_reload: bool = False) -> dict:
 
     return dict(_lively_pause_cache["rules"])
 
+def notify_lively_not_found(path: str | None = None):
+    """Notifies the user via system tray if Lively.exe could not be found."""
+    try:
+        if tray.tray_icon:
+            target = path or "caminho não configurado"
+            tray.tray_icon.notify(
+                f"Lively.exe não encontrado em:\n{target}\nVerifique o caminho nas configurações.",
+                "Lively Wallpaper",
+            )
+    except Exception:
+        pass
+
 def is_lively_running() -> bool:
     """Checks if Lively Wallpaper process is active."""
-    for proc in psutil.process_iter(["name"]):
-        if proc.info["name"] and "lively" in proc.info["name"].lower():
-            return True
+    try:
+        for proc in psutil.process_iter(["name"]):
+            try:
+                name = proc.info.get("name")
+                if name and "lively" in name.lower():
+                    return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+    except Exception:
+        pass
     return False
 
 def open_lively_gui() -> bool:
     """Brings the Lively Wallpaper GUI window to the foreground."""
     lively_exe = config.get("lively_path")
-    if not os.path.exists(lively_exe):
+    if not lively_exe or not os.path.exists(lively_exe):
         log(f"ERROR: Lively.exe not found at: {lively_exe}")
+        notify_lively_not_found(lively_exe)
         return False
     try:
         si = subprocess.STARTUPINFO()
@@ -172,7 +193,7 @@ def clear_library_videos():
 def set_lively_playback(play: bool) -> bool:
     """Toggles Lively playback state (pause/resume) globally."""
     lively_exe = config.get("lively_path")
-    if not os.path.exists(lively_exe) or not is_lively_running():
+    if not lively_exe or not os.path.exists(lively_exe) or not is_lively_running():
         return False
     try:
         si = subprocess.STARTUPINFO()
@@ -193,8 +214,9 @@ def set_wallpaper(video_path: str, monitor: int | str | None = None, update_hist
     """Sends a command to Lively.exe to change the current wallpaper, optionally targeting a specific monitor."""
     lively_exe = config.get("lively_path")
     
-    if not os.path.exists(lively_exe):
+    if not lively_exe or not os.path.exists(lively_exe):
         log(f"ERROR: Lively.exe not found at: {lively_exe}")
+        notify_lively_not_found(lively_exe)
         return False
         
     if not is_lively_running():
