@@ -1,5 +1,5 @@
 import os
-from src.config import WALLPAPER_DIR, THUMBS_DIR, config, save_config
+from src.config import WALLPAPER_DIR, THUMBS_DIR, LOCKSCREEN_FRAMES_DIR, config, save_config
 from src.utils.logger import log
 
 def get_valid_wallpapers() -> set[str]:
@@ -19,11 +19,13 @@ def scan_orphans() -> dict[str, list[str]]:
     Returns:
         {
             "orphan_thumbs": [list of orphan thumbnail file paths],
+            "orphan_frames": [list of orphan lockscreen frame file paths],
             "orphan_cache": [list of video filenames in duration_cache that no longer exist]
         }
     """
     valid_files = get_valid_wallpapers()
     orphan_thumbs: list[str] = []
+    orphan_frames: list[str] = []
     orphan_cache: list[str] = []
 
     # Check thumbnails folder
@@ -35,6 +37,14 @@ def scan_orphans() -> dict[str, list[str]]:
                 if base_video_name not in valid_files:
                     orphan_thumbs.append(os.path.join(THUMBS_DIR, f))
 
+    # Check lockscreen high-res frames folder
+    if os.path.exists(LOCKSCREEN_FRAMES_DIR):
+        for f in os.listdir(LOCKSCREEN_FRAMES_DIR):
+            if f.lower().endswith(".jpg"):
+                base_video_name = f[:-4]
+                if base_video_name not in valid_files:
+                    orphan_frames.append(os.path.join(LOCKSCREEN_FRAMES_DIR, f))
+
     # Check duration_cache in config
     duration_cache = config.get("duration_cache", {})
     for filename in duration_cache.keys():
@@ -43,22 +53,25 @@ def scan_orphans() -> dict[str, list[str]]:
 
     return {
         "orphan_thumbs": orphan_thumbs,
+        "orphan_frames": orphan_frames,
         "orphan_cache": orphan_cache
     }
 
 def cleanup_orphans() -> dict[str, int]:
     """
-    Safely removes orphan thumbnails and duration cache entries.
+    Safely removes orphan thumbnails, lockscreen frames, and duration cache entries.
     Guarantees that no valid wallpapers in wallpapers/ or items in Library/ are touched.
     
     Returns:
-        {"cleaned_thumbs": count, "cleaned_cache": count}
+        {"cleaned_thumbs": count, "cleaned_frames": count, "cleaned_cache": count}
     """
     orphans = scan_orphans()
     orphan_thumbs = orphans["orphan_thumbs"]
+    orphan_frames = orphans.get("orphan_frames", [])
     orphan_cache = orphans["orphan_cache"]
 
     cleaned_thumbs = 0
+    cleaned_frames = 0
     cleaned_cache = 0
 
     # Delete orphan thumbs
@@ -70,6 +83,15 @@ def cleanup_orphans() -> dict[str, int]:
         except Exception as e:
             log(f"Error removing orphan thumbnail {thumb_path}: {e}")
 
+    # Delete orphan frames
+    for frame_path in orphan_frames:
+        try:
+            if os.path.exists(frame_path):
+                os.remove(frame_path)
+                cleaned_frames += 1
+        except Exception as e:
+            log(f"Error removing orphan frame {frame_path}: {e}")
+
     # Remove orphan duration cache entries
     if orphan_cache:
         duration_cache = config.get("duration_cache", {})
@@ -80,8 +102,9 @@ def cleanup_orphans() -> dict[str, int]:
         config["duration_cache"] = duration_cache
         save_config(config)
 
-    log(f"Cache cleanup completed: removed {cleaned_thumbs} orphan thumbnails and {cleaned_cache} duration cache entries.")
+    log(f"Cache cleanup completed: removed {cleaned_thumbs} orphan thumbnails, {cleaned_frames} orphan frames and {cleaned_cache} duration cache entries.")
     return {
         "cleaned_thumbs": cleaned_thumbs,
+        "cleaned_frames": cleaned_frames,
         "cleaned_cache": cleaned_cache
     }
