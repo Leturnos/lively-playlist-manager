@@ -4,7 +4,7 @@ from tkinter import ttk
 from PIL import Image, ImageTk
 from src.config import config, save_config, WALLPAPER_DIR
 from src.utils.logger import log
-from src.utils.thumbnails import THUMB_W, THUMB_H, create_placeholder
+from src.utils.thumbnails import THUMB_W, THUMB_H, create_placeholder, start_thumbnail_generator
 from src.ui.theme import COLORS
 from src.ui.dialogs import prompt_dialog, confirm_dialog, info_dialog
 from src.utils.cache import scan_orphans, cleanup_orphans
@@ -20,10 +20,20 @@ def clean_name(filename: str) -> str:
             .replace("-", " ")
             .split(".")[0])
 
+_active_root: tk.Tk | None = None
+
 def open_playlist_manager():
-    """Opens the Tkinter-based playlist management window."""
-    if state.is_window_open:
-        return
+    """Opens the Tkinter-based playlist management window, or brings it to the front if already open."""
+    global _active_root
+    if state.is_window_open and _active_root is not None:
+        try:
+            if _active_root.winfo_exists():
+                _active_root.deiconify()
+                _active_root.lift()
+                _active_root.focus_force()
+                return
+        except Exception:
+            pass
     state.is_window_open = True
 
     all_files = sorted([
@@ -50,6 +60,7 @@ def open_playlist_manager():
     pending_thumbs = set()
 
     root = tk.Tk()
+    _active_root = root
     root.title("Gerenciador de Playlist de Wallpapers")
     root.geometry("760x700")
     root.configure(bg=COLORS["base"])
@@ -61,7 +72,9 @@ def open_playlist_manager():
     root.after(200, lambda: root.attributes("-topmost", False))
 
     def on_close():
+        global _active_root
         state.is_window_open = False
+        _active_root = None
         root.destroy()
     root.protocol("WM_DELETE_WINDOW", on_close)
 
@@ -104,16 +117,17 @@ def open_playlist_manager():
     def run_cache_cleanup():
         orphans = scan_orphans()
         n_thumbs = len(orphans["orphan_thumbs"])
+        n_frames = len(orphans.get("orphan_frames", []))
         n_cache = len(orphans["orphan_cache"])
-        if n_thumbs == 0 and n_cache == 0:
-            info_dialog(root, "Cache Limpo", "Nenhum arquivo órfão encontrado. Seu cache e miniaturas estão totalmente sincronizados com os wallpapers.")
+        if n_thumbs == 0 and n_frames == 0 and n_cache == 0:
+            info_dialog(root, "Cache Limpo", "Nenhum arquivo órfão encontrado. Seu cache, frames e miniaturas estão totalmente sincronizados com os wallpapers.")
             return
 
-        msg = (f"Foram encontrados {n_thumbs} miniatura(s) e {n_cache} registro(s) de duração "
+        msg = (f"Foram encontrados {n_thumbs} miniatura(s), {n_frames} frame(s) estático(s) e {n_cache} registro(s) de duração "
                f"de vídeos que não existem mais na pasta wallpapers.\n\nDeseja limpá-los com segurança?")
         if confirm_dialog(root, "Limpeza de Cache Órfão", msg):
             res = cleanup_orphans()
-            info_dialog(root, "Sucesso", f"Limpeza concluída!\n\nRemovidas {res['cleaned_thumbs']} miniaturas e {res['cleaned_cache']} entradas de duração.")
+            info_dialog(root, "Sucesso", f"Limpeza concluída!\n\nRemovidas {res['cleaned_thumbs']} miniaturas, {res.get('cleaned_frames', 0)} frames e {res['cleaned_cache']} entradas de duração.")
 
     def reload_wallpapers():
         nonlocal all_files
@@ -126,6 +140,7 @@ def open_playlist_manager():
                 checks[n] = tk.BooleanVar(value=True)
         redraw()
         update_counter()
+        start_thumbnail_generator()
         log(f"Wallpapers reloaded: {len(all_files)} files found.")
 
     btn_folder = tk.Button(header, text="📂 Abrir Pasta", command=open_wallpaper_dir,
