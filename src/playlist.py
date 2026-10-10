@@ -199,12 +199,14 @@ def run_rotation_engine():
             while not state.stop_event.is_set():
                 if state.playlist_needs_reload:
                     state.playlist_needs_reload = False
+                    state.skip_event.clear()
                     break
 
                 # 1. Handle "Play Previous" request
                 if state.play_previous_event.is_set():
                     state.play_previous_event.clear()
                     state.skip_event.clear()
+                    is_initial_item = False
                     new_idx, target_path = step_previous_video(active_pool, pool_index, order)
                     if target_path:
                         pool_index = new_idx
@@ -216,6 +218,7 @@ def run_rotation_engine():
                 elif state.play_specific_event.is_set():
                     state.play_specific_event.clear()
                     state.skip_event.clear()
+                    is_initial_item = False
                     state.forward_history.clear()
                     if state.next_video_request:
                         video_path = state.next_video_request
@@ -230,6 +233,7 @@ def run_rotation_engine():
                 # 3. Handle manual "Next" request from User (skip_event)
                 elif state.skip_event.is_set():
                     state.skip_event.clear()
+                    is_initial_item = False
                     if state.forward_history:
                         video_path = state.forward_history.pop()
                         for idx, p in enumerate(active_pool):
