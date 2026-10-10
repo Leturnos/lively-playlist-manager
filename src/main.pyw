@@ -9,7 +9,7 @@ if ROOT_DIR not in sys.path:
 
 from src.config import config
 from src.playlist import run_rotation_engine
-from src.utils.thumbnails import background_thumbnail_generator
+from src.utils.thumbnails import start_thumbnail_generator
 from src.utils.hotkeys import start_hotkey_listener
 from src.utils.solid_color import ensure_desktop_background_configured
 from src.ui.tray import start_tray
@@ -24,8 +24,7 @@ def main():
     rotation_thread.start()
     
     # Start the thumbnail generator in the background
-    thumb_thread = threading.Thread(target=background_thumbnail_generator, daemon=True)
-    thumb_thread.start()
+    start_thumbnail_generator()
     
     # Start global hotkeys listener in the background
     hotkey_thread = threading.Thread(target=start_hotkey_listener, daemon=True)

@@ -1,4 +1,5 @@
 import os
+import threading
 from PIL import Image, ImageDraw
 from moviepy import VideoFileClip
 from src.config import WALLPAPER_DIR, THUMBS_DIR, LOCKSCREEN_FRAMES_DIR
@@ -6,6 +7,9 @@ from src.state import thumbs_ready, thumbs_lock, stop_event
 from src.utils.logger import log
 
 THUMB_W, THUMB_H = 200, 113
+
+_thumb_thread: threading.Thread | None = None
+_thumb_thread_lock = threading.Lock()
 
 def create_placeholder():
     """Creates a placeholder image for videos without thumbnails yet."""
@@ -64,6 +68,9 @@ def generate_thumbnail(filename: str):
 
 def background_thumbnail_generator():
     """Worker thread to generate thumbnails for all videos in the wallpaper directory."""
+    if not os.path.exists(WALLPAPER_DIR):
+        return
+
     files = sorted([
         f for f in os.listdir(WALLPAPER_DIR)
         if f.lower().endswith((".mp4", ".webm", ".mkv"))
@@ -73,3 +80,22 @@ def background_thumbnail_generator():
         if stop_event.is_set():
             break
         generate_thumbnail(filename)
+
+def start_thumbnail_generator() -> threading.Thread | None:
+    """
+    Starts or restarts the thumbnail generation worker thread if not already running.
+    Scans the wallpaper directory and generates thumbnails / high-res frame caches
+    for any missing files.
+    """
+    global _thumb_thread
+    with _thumb_thread_lock:
+        if _thumb_thread is not None and _thumb_thread.is_alive():
+            return _thumb_thread
+
+        _thumb_thread = threading.Thread(
+            target=background_thumbnail_generator,
+            daemon=True,
+            name="ThumbnailGeneratorWorker"
+        )
+        _thumb_thread.start()
+        return _thumb_thread
