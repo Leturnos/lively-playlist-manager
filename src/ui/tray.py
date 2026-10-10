@@ -348,8 +348,31 @@ def build_menu():
     )
 
 def update_menu():
-    """Refreshes the tray icon menu to reflect state changes."""
+    """Refreshes the tray icon menu and dynamic tooltip to reflect state changes."""
     if tray_icon:
+        curr_mode = config.get("mode", "video")
+        mode_label = {
+            "video": "Vídeo",
+            "30s": "30s",
+            "1min": "1m",
+            "5min": "5m",
+            "10min": "10m",
+            "30min": "30m",
+            "1h": "1h"
+        }.get(curr_mode, curr_mode or "Vídeo")
+
+        if state.current_video:
+            clean_title = (
+                state.current_video
+                .replace("-moewalls-com", "")
+                .replace("-", " ")
+                .split(".")[0]
+            )
+            pause_tag = " [Pausado]" if state.is_paused else ""
+            tray_icon.title = f"Lively: {clean_title} ({mode_label}){pause_tag}"
+        else:
+            tray_icon.title = f"Wallpaper Playlist ({mode_label})"
+
         tray_icon.menu = build_menu()
 
 def start_tray():
@@ -363,6 +386,6 @@ def start_tray():
     
     def setup(icon):
         icon.visible = True
-        icon.menu = build_menu()
+        update_menu()
 
     tray_icon.run(setup=setup)
