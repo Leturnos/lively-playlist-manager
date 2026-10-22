@@ -8,6 +8,8 @@ play_previous_event = threading.Event()
 
 # Global State
 is_paused = False
+is_display_off = False
+is_system_shutting_down = False
 current_video = None  # Current playing filename
 next_video_request = None  # Path for "Play Now" feature
 is_window_open = False

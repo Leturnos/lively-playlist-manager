@@ -35,6 +35,8 @@ DWMWA_CLOAKED = 14
 DESKTOP_CLASSES = frozenset({
     "WorkerW",
     "Progman",
+    "SHELLDLL_DefView",
+    "SysListView32",
     "RainmeterMeterWindow",
     "_cls_desk_",
     "TMainBox",
@@ -53,7 +55,10 @@ SHELL_OVERLAY_CLASSES = frozenset({
     "WindowsDashboard",
 })
 
-IGNORED_CLASSES = DESKTOP_CLASSES | SHELL_OVERLAY_CLASSES
+# Windows ghost / hung application wrappers created by DWM when an app hangs or terminates
+GHOST_CLASSES = frozenset({"Ghost"})
+
+IGNORED_CLASSES = DESKTOP_CLASSES | SHELL_OVERLAY_CLASSES | GHOST_CLASSES
 
 WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 MONITORENUMPROC = ctypes.WINFUNCTYPE(
@@ -240,7 +245,8 @@ def get_visible_windows(
     cb = WNDENUMPROC(enum_cb)
     hdesk = None
     try:
-        hdesk = ctypes.windll.user32.OpenInputDesktop(0, False, 0x0100 | 0x0040 | 0x0004 | 0x0001 | 0x0002)
+        # 0x0001 = DESKTOP_READOBJECTS, 0x0040 = DESKTOP_ENUMERATE
+        hdesk = ctypes.windll.user32.OpenInputDesktop(0, False, 0x0001 | 0x0040)
     except Exception:
         pass
 
@@ -441,7 +447,14 @@ def is_user_gaming_or_focused() -> bool:
         if name in DESKTOP_CLASSES:
             return False
         if name in SHELL_OVERLAY_CLASSES:
-            return any(bool(get_visible_windows(target_monitor_rect=m["rect"])) for m in get_system_monitors())
+            for m in get_system_monitors():
+                win_entries = get_visible_windows(target_monitor_rect=m["rect"], include_hwnds=True)
+                if any(ctypes.windll.user32.IsZoomed(h) for _, h in win_entries):
+                    return True
+                for r, _ in win_entries:
+                    if is_rect_covering(r, m["work"], 0.95):
+                        return True
+            return False
 
         rect = RECT()
         if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
@@ -561,6 +574,11 @@ def should_pause_for_lively() -> bool:
             else:
                 fg_is_desktop = True
 
+        # If desktop has focus, user returned to desktop; wallpaper is directly visible.
+        # Mirrors Lively's Playback rule: desktop focus never pauses wallpaper.
+        if fg_is_desktop:
+            return False
+
         # Focus check: if focus pause is enabled and an application is focused on target display
         if is_focus_pause and not fg_is_desktop and fg_on_target:
             return True
@@ -603,10 +621,12 @@ def should_pause_for_lively() -> bool:
         # Algorithm 2: Direct3D Game Mode
         elif algorithm == 2:
             try:
-                state = wintypes.DWORD()
-                if ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(state)) == 0:
-                    # QUNS_RUNNING_D3D_FULL_SCREEN = 2
-                    if state.value == 2:
+                state_val = wintypes.DWORD()
+                if ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(state_val)) == 0:
+                    # QUNS_BUSY = 2, QUNS_RUNNING_D3D_FULL_SCREEN = 3
+                    if state_val.value in (2, 3):
+                        if fg_is_desktop:
+                            return False
                         return True
             except Exception:
                 pass

@@ -110,7 +110,7 @@ def run_rotation_engine():
 
     is_first_cycle = True
 
-    while not state.stop_event.is_set():
+    while not state.stop_event.is_set() and not state.is_system_shutting_down:
         try:
             if config.get("mode") is None:
                 time.sleep(2)
@@ -196,10 +196,14 @@ def run_rotation_engine():
 
             log(f"Playlist initialized: {len(active_pool)} videos. Mode: {config['mode']} ({order})")
 
-            while not state.stop_event.is_set():
+            while not state.stop_event.is_set() and not state.is_system_shutting_down:
                 if state.playlist_needs_reload:
                     state.playlist_needs_reload = False
                     state.skip_event.clear()
+                    break
+
+                # Check for shutdown signal before proceeding with next wallpaper
+                if state.stop_event.is_set() or state.is_system_shutting_down:
                     break
 
                 # 1. Handle "Play Previous" request
@@ -272,6 +276,10 @@ def run_rotation_engine():
 
                 log(f"Next wallpaper: {os.path.basename(video_path)} ({duration:.1f}s)")
 
+                # Guard against setting wallpaper or syncing if system is shutting down or stopped
+                if state.stop_event.is_set() or state.is_system_shutting_down:
+                    break
+
                 # 1. Synchronize desktop background frame BEFORE changing wallpaper in Lively.
                 # This primes Windows DWM/Explorer so the transition reveals the new wallpaper frame immediately.
                 if config.get("desktop_background_mode", "sync_wallpaper") == "sync_wallpaper":
@@ -316,6 +324,7 @@ def run_rotation_engine():
                 
                 while True:
                     if (state.stop_event.is_set() or 
+                        state.is_system_shutting_down or
                         state.skip_event.is_set() or 
                         state.play_specific_event.is_set() or 
                         state.play_previous_event.is_set() or
@@ -366,7 +375,7 @@ def run_rotation_engine():
                     if active_time >= effective_limit:
                         break
 
-                    if state.stop_event.wait(0.5):
+                    if state.stop_event.wait(0.5) or state.is_system_shutting_down:
                         break
 
                     now = time.monotonic()
@@ -374,17 +383,30 @@ def run_rotation_engine():
                     delta = min(now - last_tick, 1.0)
                     last_tick = now
 
-                    paused = state.is_paused or locked or should_pause_for_lively()
+                    display_off = state.is_display_off
+                    shutting_down = state.is_system_shutting_down
+                    paused = state.is_paused or display_off or shutting_down or locked or should_pause_for_lively()
                     if paused:
                         if not is_currently_paused:
                             is_currently_paused = True
-                            log(f"Rotation paused: {os.path.basename(video_path)} at {active_time:.1f}s / {effective_limit:.1f}s")
+                            reason = "display off" if display_off else ("shutdown" if shutting_down else "performance/locked")
+                            log(f"Rotation paused ({reason}): {os.path.basename(video_path)} at {active_time:.1f}s / {effective_limit:.1f}s")
                         continue
                     elif is_currently_paused:
                         is_currently_paused = False
                         last_tick = time.monotonic()
                         last_lively_check = last_tick
                         log(f"Rotation resumed: {os.path.basename(video_path)} from {active_time:.1f}s / {effective_limit:.1f}s")
+                        # Immediate reconciliation upon unpausing (e.g. after exiting a game or turning screen back on)
+                        if state.current_video:
+                            try:
+                                desktop_wp = get_lively_current_wallpaper()
+                                if desktop_wp and desktop_wp.lower() != state.current_video.lower():
+                                    if is_lively_running():
+                                        log(f"Desktop drift detected on resume: Lively is playing '{desktop_wp}', expected '{state.current_video}'. Re-applying.")
+                                        set_wallpaper(video_path, update_history=False)
+                            except Exception:
+                                pass
 
                     # Periodic check (every 5 seconds) to ensure Lively did not lose wallpaper
                     # or restart due to Explorer / iTop Easy Desktop desktop refresh
