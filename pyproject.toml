@@ -3,16 +3,19 @@ name = "lively-playlist-manager"
 version = "1.0.0"
 description = "A custom wallpaper playlist manager for Lively Wallpaper"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "moviepy>=2.0.0",
     "psutil>=6.0.0",
     "pystray>=0.19.5",
-    "Pillow>=10.0.0",
+    "Pillow>=13.0.0",
 ]
 
 [tool.uv]
 managed = true
+override-dependencies = [
+    "pillow>=13.0.0",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
@@ -20,3 +23,13 @@ packages = ["src"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+norecursedirs = [".venv", ".git", "Library", "wallpapers", "Static Wallpaper"]
